@@ -17,7 +17,6 @@ from shq.scanner import (
     WindowCapture,
     capture_game_window,
 )
-from shq.scanner.wuku import WukuCollector, WukuConfig
 from shq.solver import BruteForceSolver, GreedySolver
 
 
@@ -139,30 +138,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="一键完成：调整窗口→导航到武库→截图，保存到指定目录",
-    )
-    parser.add_argument(
-        "--collect-wuku",
-        type=Path,
-        default=None,
-        help="自动采集武库中所有已获得的山河器，保存到指定目录",
-    )
-    parser.add_argument(
-        "--wuku-workers",
-        type=int,
-        default=4,
-        help="武库采集时 OCR 并发线程数，默认 4",
-    )
-    parser.add_argument(
-        "--wuku-resume",
-        type=Path,
-        default=None,
-        help="武库采集断点续传状态文件路径",
-    )
-    parser.add_argument(
-        "--wuku-overlap-rows",
-        type=int,
-        default=1,
-        help="武库采集页间重叠行数，默认 1",
     )
     parser.add_argument(
         "--manual-fallback",
@@ -468,31 +443,6 @@ def cmd_auto_collect(args: argparse.Namespace) -> None:
     print(f"      已保存：{path}")
 
 
-def cmd_collect_wuku(args: argparse.Namespace) -> None:
-    """自动采集武库中所有已获得的山河器。"""
-    _safe_print("⚠️  警告：自动化点击可能违反游戏用户协议，请自行承担风险。")
-
-    output_dir = args.collect_wuku
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    backend = _create_ocr_backend(args.ocr_backend)
-    config = WukuConfig(
-        ocr_workers=args.wuku_workers,
-        overlap_rows=args.wuku_overlap_rows,
-    )
-
-    collector = WukuCollector(
-        ocr_backend=backend,
-        output_dir=output_dir,
-        config=config,
-        resume_path=args.wuku_resume,
-        attach_thread=args.attach_input,
-    )
-
-    result = collector.collect()
-    _safe_print_json(result)
-
-
 def _create_ocr_backend(name: str):
     """根据名称创建 OCR 后端。"""
     if name == "easyocr":
@@ -514,8 +464,6 @@ def main() -> None:
         cmd_find_process(args)
     elif args.auto_collect is not None:
         cmd_auto_collect(args)
-    elif args.collect_wuku is not None:
-        cmd_collect_wuku(args)
     elif args.resize:
         cmd_resize(args)
     elif args.nav_to_wuku:

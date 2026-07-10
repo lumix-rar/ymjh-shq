@@ -4,136 +4,211 @@
 > 交接人：前序 Agent
 > 接收人：后续 Agent
 
-## 一、当前会话完成的工作
+## 一、任务目标
 
-### 1.1 武库山河器自动采集模块
+为 PC 端《一梦江湖》开发一个小工具，能够：
 
-已按设计实现 `shq/scanner/wuku/` 子包，目标：自动进入武库 → 筛选“全部” → 按页扫描网格 → 识别已获得山河器 → 点击读取右侧面板 → 滚动翻页 → 合并数据 → 导出 JSON。
+1. **自动采集**玩家拥有的所有山河器数据（名称、品质、五行、等级、共贯等级、素蕴、派生素蕴等）。
+2. **自动采集**玩家灵鉴布局（区域、孔位、连线、孔位培养、背面区域、玄枢等）。
+3. 基于真实游戏规则，给出**山河器最优摆放解**，支持输出/治疗/承伤/综合等流派偏好。
 
-新增文件：
+当前处于项目初始化与 OCR 自动采集流程阶段，核心求解逻辑、游戏规则数值全部以 TODO 占位，等待真实数据填充。
+
+## 二、当前已具备的基础
+
+### 2.1 项目结构
 
 ```
-shq/scanner/wuku/
-├── __init__.py          # 导出公共类
-├── models.py            # GridItem、DetailData、AffixData、BBox、Point
-├── config.py            # WukuConfig、ROIConfig（相对窗口比例）
-├── grid_detector.py     # GridItemDetector：左卡网格 item 检测
-├── detail_reader.py     # DetailPanelReader：右侧面板解析
-├── scroll_controller.py # ScrollController：滚轮滚动 + 触底检测
-├── ocr_pipeline.py      # OCRPipeline：并发 OCR 解析队列
-├── state.py             # CollectionState：HashMap + 断点续传
-├── merger.py            # ShanheqiMerger：左右数据合并为 Shanheqi
-└── collector.py         # WukuCollector：总控状态机
+shq/
+├── models.py              # 核心数据模型（Shanheqi、Lingjian、Region、Slot、Connection、五行、品质等）
+├── rules/
+│   ├── interface.py       # RuleSet 抽象
+│   └── ymjh_default.py    # 一梦江湖规则占位实现（全 TODO）
+├── scanner/
+│   ├── interface.py       # Scanner 抽象
+│   ├── ocr_scanner.py     # OCR 扫描器（ShanheqiOCR、RapidOCRBackend、EasyOCRBackend）
+│   ├── navigation_controller.py  # 山河器界面导航（resize、OCR 识标签、点击武库、界面判断）
+│   ├── window_capture.py  # 窗口定位、截图、固定客户区大小 1334x750
+│   ├── input_simulator.py # Windows SendInput 坐标点击
+│   ├── process_finder.py  # 查找 wyclx64.exe 进程
+│   └── manual_importer.py # 手动 JSON 导入
+├── solver/
+│   ├── interface.py       # Solver 抽象
+│   ├── brute_force.py     # 暴力搜索占位
+│   └── greedy.py          # 贪心求解占位
+├── cli.py                 # 统一命令行入口
+└── config.py              # 进程/窗口匹配规则
+
+tests/                     # 单元测试（当前 23 个全过）
+docs/
+├── ARCHITECTURE.md
+├── TODO.md
+└── HANDOVER.md            # 本文档
 ```
 
-CLI 新增命令：
+### 2.2 已实现的关键能力
 
-```bash
-python -m shq.cli --collect-wuku ./wuku_output --ocr-backend rapidocr
-```
+- **统一命令入口**：
+  ```bash
+  python -m shq.cli --auto-collect ./captures --ocr-backend rapidocr
+  ```
+  流程：调整窗口到 1334×750 → OCR 识别右侧导航标签 → 点击“武库” → 检测到高亮切到“武库”后截图保存。
 
-可选参数：
-- `--wuku-workers N`：OCR 并发线程数，默认 4
-- `--wuku-resume PATH`：断点续传状态文件
-- `--wuku-overlap-rows N`：页间重叠行数，默认 1
-- `--attach-input`：点击前挂接目标窗口线程
+- **OCR 引擎**：默认推荐 `rapidocr-onnxruntime`（已写入 `requirements.txt`），兼容 Python 3.14；可选 EasyOCR。
 
-### 1.2 基于实际截图的关键发现
+- **武库界面判断**：`NavigationController._is_in_wuku()` 改为通过右侧导航标签的**高亮背景亮度**判断当前子界面，已用实际截图验证可正确区分“搜寻”和“武库”。
 
-已通过管理员权限截取 16+ 张武库界面截图并分析：
+- **多显示器坐标修复**：`InputSimulator.move_to()` 已改用虚拟桌面指标（`SM_CXVIRTUALSCREEN` 等）对 `SendInput` 绝对坐标归一化。
 
-- **布局**：山河器列表是左侧双列网格。
-- **已获得判断**：左卡 item 上出现绿色 `X级` 文字即为已获得；未获得没有等级文字。
-- **派生素蕴**：右侧面板“派生素蕴”区域不显示具体内容，但左卡 item 下方有棕褐色标签（如“起势”）。
-- **特殊等级**：item 图标右上角小图标，红色为“玄枢”，黄色/橙色为“卓异”。
-- **右侧面板**：包含名称、元素图标、等级、主属性、评分、基础素蕴列表。
-- **滚动**：鼠标滚轮有效；每次约 `-1200` 滚轮刻度移动约 1 行；触底后画面不再变化。
-- **元素**：金木水火土，显示在右侧面板名称右侧。
+- **测试**：`pytest -q` 当前 23 passed。
 
-### 1.3 当前状态
+## 三、调研结论（基于公开攻略，需后续验证）
 
-- `pytest -q`：全部 38 个测试通过（含新增 wuku 单元测试）。
-- **JSON 序列化问题已修复**：`shq/scanner/wuku/state.py` 中 `_shq_to_dict()` 现在把 `tags` 序列化为 `list`，加载时再恢复为 `frozenset`。
-- **网格 item 识别已修复并验证**：`GridItemDetector` 改为先检测 item 左侧蓝色图标，再以图标为锚点拟合完整网格，cell 边框完整、不漏 item；对特殊等级图标（如红色“玄枢”）不敏感。
-- **派生素蕴标签已能识别**：通过颜色定位棕褐标签区域 + 模板匹配，当前模板只有 `起势`；OCR 对超小标签文字不敏感，因此模板匹配是主要识别路径。
-- **滚动翻页存在异常**： `--collect-wuku` 端到端运行时，滚动没有真正移动列表，仅翻 2～3 页就误判触底，导致实际只扫描了第一页附近的未获得 item，最终采集 0 条或少量数据。
-- **导航标签点击偶发异常**：`NavigationController.ensure_in_wuku()` 有时能正确点击“武库”并进入，有时会出现 y 偏移累积，把点击落到“搜寻”标签上。当前已进入武库时可直接运行采集，否则可能需要手动点选。
+山河器系统不是棋盘，而是：
 
-## 二、已知问题与待办
+- **灵鉴**由多个**区域**组成（驿寄梅花、长烟烽火、戍客怀归、黄泉夜渡、关河道远等）。
+- 每个区域有若干**孔位**，孔位间有**有向连线**。
+- 山河器有**五行**（金木水火土）和**品质**（朴素/精巧/瑰丽/绝世）。
+- 山河器基础评分 = 品质得分 + 素蕴得分；共贯 3 次后可获得**派生素蕴**（起势、承势、倾侧等）。
+- 孔位培养（思归石）会给对应孔位额外加分，**不同用户不同**。
+- 相邻孔位按连线方向产生**五行生克**：相生被指向者 +15% 基础评分，相克 -15%（比例待验证）。
+- 部分区域有**背面区域**，背面孔位本身会**降分**；背面中心孔位镶嵌**玄枢**山河器有额外加成，且玄枢共贯等级影响周围评分。
+- 区域总评分达到阈值才激活人物属性 / 解锁下一区域。
+- 不同区域对输出/治疗/承伤的收益不同，求解需按玩家偏好调整权重。
 
-### 高优先级
+**重要约束**：所有未知数值、公式、布局均使用 TODO 占位，**禁止瞎编数据**。
 
-1. **修复滚动翻页异常**
-   - 文件：`shq/scanner/wuku/scroll_controller.py`、`shq/scanner/wuku/collector.py`
-   - 现象：`--collect-wuku` 运行时列表几乎不滚动，2～3 页后就触发触底检测，最终只扫描了开头几页。
-   - 可能原因：`ScrollController.scroll_one_page()` 的滚轮刻度、方向或窗口焦点不对；触底指纹判断阈值/逻辑过于敏感。
-   - 建议：先单独用 `--diagnose-input` 确认滚轮事件确实生效；再用 `pages/page_*.png` 对比滚动前后的画面差异，确认指纹相似度计算是否正确。
+## 四、已尝试的工作与结果
 
-2. **修复导航标签点击偏移**
-   - 文件：`shq/scanner/navigation_controller.py`
-   - 现象：`ensure_in_wuku()` 自动点击“武库”时，y 偏移会累积，导致点中“搜寻”。
-   - 建议：检查 `click_on_window` 的坐标转换（客户区 vs 屏幕坐标），以及 `_nav_offset_y` 的更新逻辑，避免偏移累加。
+| 尝试 | 结果 | 备注 |
+|------|------|------|
+| 网络搜索山河器系统机制 | 成功 | 见 `docs/TODO.md` 调研结果与 README 说明 |
+| pktmon 抓包获取数据 | 放弃 | 已按用户要求清理所有抓包逻辑与 `.etl` 文件 |
+| 固定窗口大小 1334×750 | 成功 | `WindowCapture.ensure_client_size()` |
+| OCR 识别右侧导航标签 | 成功 | RapidOCR 可稳定识别“搜寻/复归/灵鉴/武库” |
+| 基于高亮背景判断当前子界面 | 成功 | 已在 `debug_current.png` 上验证 |
+| 确认自动化点击需要管理员权限 | 完成 | 普通用户权限下三种输入方式全灭；管理员权限下点击生效 |
+| 自动校准导航标签 y 偏移 | 完成 | 点击后检测实际高亮标签，计算 offset_y 并修正后续点击 |
+| 放弃强制 resize | 完成 | 一梦江湖窗口拒绝 `SetWindowPos` 调整大小，改为按实际窗口尺寸计算坐标 |
+| 增加输入诊断 & 手动降级 | 完成 | `--diagnose-input` 只检测真实 `SendInput`；`--manual-fallback` 让用户手动点击后按回车继续 |
+| 尝试 `AttachThreadInput` 绕过 UIPI | 完成 | 现已成为 `NavigationController` 默认行为；但核心限制是管理员权限 |
+| 增加点击链路调试脚本 | 完成 | `debug_click.py` 可逐步定位 `SendInput` 在哪一步失效 |
+| 清理临时调试文件 | 完成 | 已删除 `debug_*.png`、`shanheqi_ui.png`、`.etl` 等 |
+| 更新 README / TODO | 完成 | RapidOCR 改为默认推荐，增加权限提示 |
 
-3. **坐标精度校准**
-   - `collector.py` 中点击 item 后直接点击 `cell_bbox.center`，但实际游戏响应区域可能与截图坐标存在 y 轴偏移。
-   - 建议复用 `NavigationController._nav_offset_y` 的校准思路，或点击前加上经验偏移量。
+## 五、当前阻塞点
 
-4. **ROI 比例需根据实际窗口大小验证**
-   - `WukuConfig` 中的 `grid_roi`、`detail_roi`、`filter_roi` 基于 1334×750 截图估算。
-   - 若窗口实际大小不同，需确认相对比例是否仍然准确。
+1. **输入注入需要管理员权限**
+   - 用户本地测试证明：普通用户权限下 `SendInput` / `mouse_event` / `SetCursorPos` 对一梦江湖窗口完全无效；以管理员权限运行后点击生效。
+   - 因此**脚本必须以管理员权限运行**才能进行自动化点击。
+
+2. **截图坐标与实际可点击区域存在纵向偏移**
+   - 管理员权限下点击到了「灵鉴」而非「武库」，说明 OCR/截图坐标系和游戏实际响应区域在 y 轴上有偏移。
+   - 已加入自动校准：点击后检测实际高亮标签，计算并修正 y 偏移。
+
+3. **游戏窗口拒绝被强制 resize**
+   - `SetWindowPos` 无法将一梦江湖窗口调整为 `1334x750`。
+   - 已放弃固定分辨率方案，改为根据窗口实际大小按比例计算坐标。
+
+2. **缺少武库界面真实截图**
+   - 当前所有截图都是“搜寻”界面，尚未拿到“武库”界面截图。
+   - 无法标定山河器列表、筛选/排序按钮、滚动条等 ROI。
+
+## 六、下一步工作清单
+
+### 高优先级（建议按顺序执行）
+
+1. **在本地交互式终端验证输入注入能力**
+   ```bash
+   # 先自检，会短暂移动鼠标
+   python -m shq.cli --diagnose-input
+
+   # 若自检通过，再尝试完整导航
+   python -m shq.cli --auto-collect ./captures --ocr-backend rapidocr
+   ```
+   - 若 `--diagnose-input` 显示支持，但 `--auto-collect` 仍点不到游戏，加 `--attach-input`：
+     ```bash
+     python -m shq.cli --auto-collect ./captures --ocr-backend rapidocr --attach-input
+     ```
+   - 若仍失败，用 `--manual-fallback` 手动点击武库后按回车继续：
+     ```bash
+     python -m shq.cli --auto-collect ./captures --ocr-backend rapidocr --manual-fallback
+     ```
+
+2. **标定武库界面 ROI**
+   - 山河器列表区域（左侧还是中间？网格还是列表？）。
+   - “全部/品质/等级/排序”等筛选/排序控件位置。
+   - 滚动条位置与翻页逻辑（山河器可能很多，需要滚动）。
+   - 单个山河器条目的文字区域：名称、品质、五行、等级、共贯等级、素蕴、派生素蕴。
+
+3. **实现山河器列表 OCR 解析**
+   - 完善 `ShanheqiOCR._detect_shanheqi_rois()` 和 `_parse_shanheqi()`。
+   - 将识别结果存入 `Shanheqi` 模型并导出 JSON。
+
+4. **采集灵鉴布局**
+   - 进入“灵鉴”界面，截图并标定各区域、孔位、连线。
+   - 实现 `ShanheqiOCR.scan_lingjian()`，输出 `Lingjian(regions=[...])`。
+   - 注意背面区域、玄枢孔位、孔位培养分数的识别。
+
+5. **填充游戏规则**
+   - 在 `shq/rules/ymjh_default.py` 中实现真实评分逻辑：
+     - 品质得分表
+     - 素蕴评分（等级、五行、组合）
+     - 派生素蕴规则（起势/承势/倾侧等触发条件与数值）
+     - 五行生克 ±15% 是否准确、方向如何由连线决定
+     - 孔位培养加分
+     - 背面孔位减分
+     - 玄枢加成（共贯等级影响范围）
+     - 区域评分阈值与解锁判断
+     - 输出/治疗/承伤流派权重
+
+6. **实现求解器**
+   - 基于真实 `RuleSet.score()` 实现精确/启发式求解。
+   - 推荐先用 `pulp` 等 ILP 库，小数据可用暴力，大数据需剪枝/缓存/并行。
 
 ### 中低优先级
 
-- 补充更多派生素蕴标签模板：目前只有 `起势.png`，后续遇到“承势/火实/水实/木实/金实/土实”时需要新增模板并验证。
-- 优化 `GridItemDetector` 对特殊等级（玄枢/卓异）的颜色识别，目前只是简单阈值。
-- 处理 OCR 识别错误：如“无咎”被识别成“无”，“酒酣胸胆”被识别成“酒胸胆”。
-- 修复元素识别：`DetailPanelReader._extract_element()` 当前从 OCR 文本中找“金木水火土”，但元素实际是以图标显示在右面板名称右侧，导致所有 item 元素 fallback 为“金”。
-- 完善品质推断：当前 `merger.py` 默认 `Quality.SIMPLE`，因为右面板未直接显示品质。
-- 支持从 `CollectionState` 恢复后继续采集（断点续传逻辑已写但需验证）。
-- 增加采集结果与游戏内实际评分的对比校准。
+- 提供手动 JSON 录入模板与校验。
+- 可视化灵鉴布局与推荐摆放（GUI / 图片标注）。
+- 增量扫描：只识别新增/变更的山河器。
+- 结果与游戏内实际数值对比校准。
+- 日志、配置文件、打包 exe。
 
-## 三、关键代码位置速查
+## 七、关键代码位置速查
 
 | 功能 | 文件 | 关键类/函数 |
 |------|------|-------------|
-| 总控采集流程 | `shq/scanner/wuku/collector.py` | `WukuCollector.collect()` |
-| 左卡网格检测 | `shq/scanner/wuku/grid_detector.py` | `GridItemDetector.detect()` |
-| 右面板解析 | `shq/scanner/wuku/detail_reader.py` | `DetailPanelReader.parse()` |
-| 滚动控制 | `shq/scanner/wuku/scroll_controller.py` | `ScrollController.scroll_one_page()` |
-| 并发 OCR | `shq/scanner/wuku/ocr_pipeline.py` | `OCRPipeline.submit()` |
-| 数据合并 | `shq/scanner/wuku/merger.py` | `ShanheqiMerger.merge()` |
-| 状态保存 | `shq/scanner/wuku/state.py` | `CollectionState.save()/load()` |
-| CLI 入口 | `shq/cli.py` | `cmd_collect_wuku()` |
-| 数据模型 | `shq/models.py` | `Shanheqi`、`Affix` |
+| 统一采集命令 | `shq/cli.py` | `cmd_auto_collect()` |
+| 导航/点击武库 | `shq/scanner/navigation_controller.py` | `NavigationController.ensure_in_wuku()`、`_detect_selected_nav_label()` |
+| OCR 后端 | `shq/scanner/ocr_scanner.py` | `RapidOCRBackend`、`EasyOCRBackend`、`ShanheqiOCR` |
+| 窗口截图/Resize | `shq/scanner/window_capture.py` | `WindowCapture`、`DEFAULT_CLIENT_WIDTH/HEIGHT` |
+| 输入模拟 | `shq/scanner/input_simulator.py` | `InputSimulator.click_on_window()` |
+| 数据模型 | `shq/models.py` | `Shanheqi`、`Lingjian`、`Region`、`Slot`、`Quality`、`Element` |
+| 游戏规则 | `shq/rules/ymjh_default.py` | `YMJHDefaultRuleSet` |
+| 求解器 | `shq/solver/` | `BruteForceSolver`、`GreedySolver` |
 
-## 四、推荐的验证命令
+## 八、注意事项
+
+- **不要瞎编数据**：任何未经验证的数值、公式、布局都用 TODO 占位。
+- **所有坐标必须基于截图实时计算**：当前固定窗口为 1334×750，但每次运行前会检查并调整。
+- **OCR 推荐 RapidOCR**：`pip install rapidocr-onnxruntime`；EasyOCR 体积大、首次需下载模型。
+- **自动化点击风险**：可能违反游戏用户协议，务必在 README 提示中保留免责声明。
+- **权限问题**：若游戏以高完整性运行，脚本可能需要管理员权限才能注入输入。
+- **输入注入限制**：`SendInput` 已是用户态最底层 API；若仍被拦截，可试 `--attach-input`，或改用 `--manual-fallback` 手动点击。再往下需要驱动级方案，超出本项目范围。
+
+## 九、推荐的首次验证命令
 
 ```bash
-# 1. 确认输入注入可用（必须以管理员权限运行）
-python -m shq.cli --diagnose-input
+# 1. 确认能找到进程
+python -m shq.cli --find-process
 
-# 2. 运行测试
+# 2. 固定窗口并截图（验证窗口/截图链路）
+python -m shq.cli --resize
+python -m shq.cli --snapshot ymjh_current.png
+
+# 3. 以管理员权限运行一键采集（验证导航+点击）
+python -m shq.cli --auto-collect ./captures --ocr-backend rapidocr
+
+# 4. 运行测试
 python -m pytest -q
-
-# 3. 单页网格检测可视化（不滚动、不点击，只验证 item 分割）
-python -c "
-from shq.scanner.window_capture import capture_game_window
-from shq.scanner.ocr_scanner import RapidOCRBackend
-from shq.scanner.wuku.grid_detector import GridItemDetector
-import cv2
-img = capture_game_window(bring_to_front=True, fixed_size=True)
-det = GridItemDetector(RapidOCRBackend())
-items = det.detect(img)
-print('detected', len(items), 'acquired', sum(1 for i in items if i.is_acquired))
-"
-
-# 4. 端到端采集（滚动异常未修复前可能只能扫前几页）
-python -m shq.cli --collect-wuku ./wuku_test --ocr-backend rapidocr --attach-input
 ```
-
-## 五、注意事项
-
-- **必须管理员权限**：对一梦江湖窗口的 `SendInput` 输入注入需要管理员权限。
-- **自动化风险**：可能违反游戏用户协议，README 与 CLI 中已保留免责声明。
-- **不要瞎编数据**：所有未经验证的数值、公式仍用 TODO 占位；本次采集模块只读取屏幕像素，不读内存、不注入。
-- **当前阻塞点**：滚动翻页异常导致 `--collect-wuku` 无法完成全量扫描，需在修复滚动后再进行真实环境端到端验证。
