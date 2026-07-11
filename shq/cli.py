@@ -18,6 +18,7 @@ from shq.scanner import (
     RapidOCRBackend,
     ScanResult,
     ShanheqiOCR,
+    SlotCultivationReader,
     WindowCapture,
     WukuNavigator,
     WukuReader,
@@ -117,6 +118,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="武库扫描结果输出 JSON 路径（默认：./wuku_scan/owned_shanheqis.json）",
+    )
+    parser.add_argument(
+        "--scan-slot-cultivation",
+        action="store_true",
+        help="扫描灵鉴各区域孔位培养加分（需 OCR 后端 rapidocr/easyocr）",
+    )
+    parser.add_argument(
+        "--calibrate-slot-cultivation",
+        action="store_true",
+        help="校准灵鉴孔位培养 ROI，输出候选配置供人工审核",
+    )
+    parser.add_argument(
+        "--slot-cultivation-output",
+        type=Path,
+        default=None,
+        help="孔位培养扫描结果输出 JSON 路径（默认：./lingjian_scan/slot_cultivation.json）",
     )
     parser.add_argument(
         "--scan-confidence",
@@ -390,6 +407,52 @@ def cmd_scan_all_owned(args: argparse.Namespace) -> None:
     result.screenshots["output"] = str(output)
 
 
+def cmd_scan_slot_cultivation(args: argparse.Namespace) -> None:
+    """扫描灵鉴各区域孔位培养加分。"""
+    _safe_print("⚠️  警告：自动化点击可能违反游戏用户协议，请自行承担风险。")
+    backend = _create_ocr_backend(args.ocr_backend)
+    if isinstance(backend, PlaceholderOCRBackend):
+        raise SystemExit("扫描孔位培养必须使用真实 OCR 后端，请指定 --ocr-backend rapidocr")
+
+    reader = SlotCultivationReader(
+        ocr_backend=backend,
+        confidence_threshold=args.scan_confidence,
+        output_dir=args.slot_cultivation_output.parent
+        if args.slot_cultivation_output
+        else None,
+    )
+    result = reader.read(output_path=args.slot_cultivation_output)
+
+    _safe_print_json(
+        {
+            "output": str(result.output_path),
+            "regions": len(result.scan_result.region_results),
+            "locked_regions": result.scan_result.locked_region_ids,
+            "low_confidence": sum(
+                len(rr.low_confidence) for rr in result.scan_result.region_results
+            ),
+        }
+    )
+
+
+def cmd_calibrate_slot_cultivation(args: argparse.Namespace) -> None:
+    """校准灵鉴孔位培养 ROI。"""
+    _safe_print("⚠️  警告：自动化点击可能违反游戏用户协议，请自行承担风险。")
+    backend = _create_ocr_backend(args.ocr_backend)
+    if isinstance(backend, PlaceholderOCRBackend):
+        raise SystemExit("校准必须使用真实 OCR 后端，请指定 --ocr-backend rapidocr")
+
+    reader = SlotCultivationReader(
+        ocr_backend=backend,
+        output_dir=args.slot_cultivation_output.parent
+        if args.slot_cultivation_output
+        else None,
+    )
+    output = reader.calibrate(output_path=args.slot_cultivation_output)
+    print(f"校准候选配置已保存：{output}")
+    print("请人工审核后，将其内容合并到 data/lingjian_topology.json")
+
+
 def _parse_click_coord(s: str) -> tuple[int, int]:
     """解析 x,y 坐标字符串。"""
     parts = s.split(",")
@@ -564,6 +627,10 @@ def main() -> None:
         cmd_scan_all_owned(args)
     elif args.scan_wuku:
         cmd_scan_wuku(args)
+    elif args.scan_slot_cultivation:
+        cmd_scan_slot_cultivation(args)
+    elif args.calibrate_slot_cultivation:
+        cmd_calibrate_slot_cultivation(args)
     else:
         cmd_solve(args)
 

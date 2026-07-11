@@ -1,0 +1,119 @@
+{
+  "_comment": "灵鉴孔位拓扑：每个区域有哪些孔位编号（对所有人一致）。具体加分数值由扫描命令实时读取。",
+  "regions": [
+    {
+      "id": "yiji_meihua",
+      "name": "驿寄梅花",
+      "list_button": [95, 119],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "yiji_meihua_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [
+        {"id": "yiji_meihua_slot_1", "region_id": "yiji_meihua", "number": 1},
+        {"id": "yiji_meihua_slot_2", "region_id": "yiji_meihua", "number": 2}
+      ]
+    },
+    {
+      "id": "shuke_huaigui",
+      "name": "戍客怀归",
+      "list_button": null,
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "shuke_huaigui_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [
+        {"id": "shuke_huaigui_slot_1", "region_id": "shuke_huaigui", "number": 1},
+        {"id": "shuke_huaigui_slot_2", "region_id": "shuke_huaigui", "number": 2},
+        {"id": "shuke_huaigui_slot_3", "region_id": "shuke_huaigui", "number": 3}
+      ]
+    },
+    {
+      "id": "changyan_fenghuo",
+      "name": "长烟烽火",
+      "list_button": [95, 119],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "changyan_fenghuo_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [
+        {"id": "changyan_fenghuo_slot_1", "region_id": "changyan_fenghuo", "number": 1},
+        {"id": "changyan_fenghuo_slot_2", "region_id": "changyan_fenghuo", "number": 2},
+        {"id": "changyan_fenghuo_slot_3", "region_id": "changyan_fenghuo", "number": 3},
+        {"id": "changyan_fenghuo_slot_4", "region_id": "changyan_fenghuo", "number": 4}
+      ]
+    },
+    {
+      "id": "huangquan_yedu",
+      "name": "黄泉夜渡",
+      "list_button": [95, 120],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "huangquan_yedu_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [
+        {"id": "huangquan_yedu_slot_1", "region_id": "huangquan_yedu", "number": 1},
+        {"id": "huangquan_yedu_slot_2", "region_id": "huangquan_yedu", "number": 2},
+        {"id": "huangquan_yedu_slot_3", "region_id": "huangquan_yedu", "number": 3},
+        {"id": "huangquan_yedu_slot_4", "region_id": "huangquan_yedu", "number": 4}
+      ]
+    },
+    {
+      "id": "guanhe_daoyuan",
+      "name": "关河道远",
+      "list_button": [95, 119],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "guanhe_daoyuan_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [
+        {"id": "guanhe_daoyuan_slot_1", "region_id": "guanhe_daoyuan", "number": 1},
+        {"id": "guanhe_daoyuan_slot_2", "region_id": "guanhe_daoyuan", "number": 2},
+        {"id": "guanhe_daoyuan_slot_3", "region_id": "guanhe_daoyuan", "number": 3},
+        {"id": "guanhe_daoyuan_slot_4", "region_id": "guanhe_daoyuan", "number": 4},
+        {"id": "guanhe_daoyuan_slot_5", "region_id": "guanhe_daoyuan", "number": 5}
+      ]
+    },
+    {
+      "id": "haiguan_duanyun",
+      "name": "骸关断云",
+      "list_button": [95, 119],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "haiguan_duanyun_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [
+        {"id": "haiguan_duanyun_slot_1", "region_id": "haiguan_duanyun", "number": 1},
+        {"id": "haiguan_duanyun_slot_2", "region_id": "haiguan_duanyun", "number": 2},
+        {"id": "haiguan_duanyun_slot_3", "region_id": "haiguan_duanyun", "number": 3},
+        {"id": "haiguan_duanyun_slot_4", "region_id": "haiguan_duanyun", "number": 4},
+         {"id": "haiguan_duanyun_slot_5", "region_id": "haiguan_duanyun", "number": 5},
+         {"id": "haiguan_duanyun_slot_6", "region_id": "haiguan_duanyun", "number": 6}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "_comment": "校准候选结果，请人工审核后替换 data/lingjian_topology.json",
+  "regions": [
+    {
+      "id": "guanhe_daoyuan",
+      "name": "关河道远",
+      "locked": false,
+      "list_button": [
+        95,
+        119
+      ],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "guanhe_daoyuan_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [],
+      "raw_texts": [
+        {
+          "text": "天河道远",
+          "x": 46,
+          "y": 114,
+          "w": 99,
+          "h": 18,
+          "confidence": 0.6210476994514466
+        },
+        {
+          "text": "灵鉴专属成就",
+          "x": 453,
+          "y": 114,
+          "w": 149,
+          "h": 17,
+          "confidence": 0.7646626915250506
+        },
+        {
+          "text": "孔位评分：+3600",
+          "x": 253,
+          "y": 217,
+          "w": 178,
+          "h": 23,
+          "confidence": 0.8848364786668257
+        },
+        {
+          "text": "孔位评分：+3600",
+          "x": 75,
+          "y": 352,
+          "w": 179,
+          "h": 20,
+          "confidence": 0.833504552190954
+        }
+      ],
+      "number_candidates": [],
+      "score_candidates": [
+        {
+          "text": "孔位评分：+3600",
+          "x": 253,
+          "y": 217,
+          "w": 178,
+          "h": 23,
+          "confidence": 0.8848364786668257,
+          "parsed_score": 3600.0
+        },
+        {
+          "text": "孔位评分：+3600",
+          "x": 75,
+          "y": 352,
+          "w": 179,
+          "h": 20,
+          "confidence": 0.833504552190954,
+          "parsed_score": 3600.0
+        }
+      ]
+    },
+    {
+      "id": "haiguan_duanyun",
+      "name": "骸关断云",
+      "locked": false,
+      "list_button": [
+        95,
+        119
+      ],
+      "cultivation_button": null,
+      "panel_roi": {
+        "name": "haiguan_duanyun_panel",
+        "x": 0,
+        "y": 112,
+        "width": 640,
+        "height": 562
+      },
+      "slots": [],
+      "raw_texts": [
+        {
+          "text": "天断云",
+          "x": 45,
+          "y": 113,
+          "w": 100,
+          "h": 20,
+          "confidence": 0.6526936143636703
+        },
+        {
+          "text": "灵鉴专属成就",
+          "x": 452,
+          "y": 113,
+          "w": 150,
+          "h": 20,
+          "confidence": 0.7726114136832101
+        }
+      ],
+      "number_candidates": [],
+      "score_candidates": []
+    }
+  ]
+}
