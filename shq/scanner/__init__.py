@@ -9,7 +9,7 @@ from .process_finder import ProcessFinder, ProcessInfo, ProcessMatchRule
 from .search_collector import SearchCollector
 from .window_capture import WindowCapture, capture_game_window
 from .wuku_navigator import WukuNavigator
-from .wuku_scanner import WukuScanner
+from .wuku_scanner import WukuScanner, ScanResult
 
 __all__ = [
     "Scanner",
@@ -30,4 +30,5 @@ __all__ = [
     "ProcessInfo",
     "ProcessMatchRule",
     "WukuScanner",
+    "ScanResult",
 ]

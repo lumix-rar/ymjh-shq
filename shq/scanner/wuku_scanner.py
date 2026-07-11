@@ -33,6 +33,7 @@ from shq.scanner.constants import QUALITY_NAME_TO_ENUM, SUB_TAG_TO_TYPE, TYPE_TO
 from shq.scanner.input_simulator import InputSimulator
 from shq.scanner.name_resolver import ShanheqiNameResolver
 from shq.scanner.ocr_scanner import OCRBackend, RapidOCRBackend
+from shq.scanner.reconciler import ScanReconciler
 from shq.scanner.window_capture import (
     DEFAULT_CLIENT_HEIGHT,
     DEFAULT_CLIENT_WIDTH,
@@ -91,6 +92,8 @@ class ScanResult:
     shanheqis: List[Shanheqi] = field(default_factory=list)
     low_confidence: List[dict] = field(default_factory=list)
     screenshots: Dict[str, str] = field(default_factory=dict)
+    reconciliation_report: List[dict] = field(default_factory=list)
+    quality_summary: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -924,7 +927,7 @@ class WukuScanner:
             encoding="utf-8",
         )
 
-    def run(self) -> ScanResult:
+    def run(self, reconcile: bool = True) -> ScanResult:
         """扫描武库全部品质。
 
         为避免跨品质重名歧义，实际按品质分批扫描后合并结果。
@@ -932,13 +935,15 @@ class WukuScanner:
         result = ScanResult()
         for quality in ("朴素", "精巧", "瑰丽", "绝世"):
             _safe_print(f"\n[全量扫描] 开始扫描品质：{quality}")
-            quality_result = self.scan_quality(quality)
+            quality_result = self.scan_quality(quality, reconcile=reconcile)
             result.shanheqis.extend(quality_result.shanheqis)
             result.low_confidence.extend(quality_result.low_confidence)
             result.screenshots.update(quality_result.screenshots)
+            result.quality_summary[quality] = quality_result.quality_summary
+            result.reconciliation_report.extend(quality_result.reconciliation_report)
         return result
 
-    def scan_quality(self, quality: str) -> ScanResult:
+    def scan_quality(self, quality: str, reconcile: bool = True) -> ScanResult:
         """扫描指定品质分类。"""
         result = ScanResult()
         self._current_quality = quality
@@ -954,6 +959,34 @@ class WukuScanner:
                 pending_count,
                 all_cells_log,
             ) = self._scan_grid(executor)
+
+        # 按底稿做漏扫兜底补齐
+        if reconcile:
+            reconciler = ScanReconciler(resolver=self._name_resolver)
+            owned_items, reconciliation_report = reconciler.reconcile(
+                quality, owned_items, low_conf_records
+            )
+            result.reconciliation_report = reconciliation_report
+            remaining = reconciler.remaining_missing(quality, owned_items)
+            result.quality_summary = {
+                "quality": quality,
+                "expected": self._name_resolver.expected_count(quality),
+                "detected": len(owned_items),
+                "missing": len(remaining),
+                "reconciled": len(
+                    [r for r in reconciliation_report if r.get("action") == "已补齐"]
+                ),
+            }
+        else:
+            expected = set(self._name_resolver.list_by_quality(quality))
+            detected = {s.name for s in owned_items}
+            result.quality_summary = {
+                "quality": quality,
+                "expected": len(expected),
+                "detected": len(owned_items),
+                "missing": len(expected - detected),
+                "reconciled": 0,
+            }
 
         result.shanheqis = owned_items
         result.low_confidence = low_conf_records
@@ -1024,7 +1057,9 @@ class WukuScanner:
                 for s in result.shanheqis
             ],
             "low_confidence": result.low_confidence,
-            "total_owned": len(result.shanheqis) + len(result.low_confidence),
+            "quality_summary": result.quality_summary,
+            "reconciliation_reports": result.reconciliation_report,
+            "total_owned": len(result.shanheqis),
             "high_confidence_count": len(result.shanheqis),
             "low_confidence_count": len(result.low_confidence),
         }

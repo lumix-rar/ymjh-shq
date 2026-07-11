@@ -1,5 +1,7 @@
 """命令行入口。"""
 
+from __future__ import annotations
+
 import argparse
 import json
 import time
@@ -14,6 +16,7 @@ from shq.scanner import (
     PlaceholderOCRBackend,
     ProcessFinder,
     RapidOCRBackend,
+    ScanResult,
     SearchCollector,
     ShanheqiOCR,
     WindowCapture,
@@ -104,6 +107,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--scan-wuku",
         action="store_true",
         help="扫描武库中已获得的山河器（需 OCR 后端 rapidocr/easyocr）",
+    )
+    parser.add_argument(
+        "--scan-all-owned",
+        action="store_true",
+        help="一键扫描所有品质下已获得的山河器（含漏扫兜底，推荐）",
     )
     parser.add_argument(
         "--scan-wuku-output",
@@ -327,8 +335,8 @@ def cmd_ocr_sample(args: argparse.Namespace) -> None:
         print(f"  - {p}")
 
 
-def cmd_scan_wuku(args: argparse.Namespace) -> None:
-    """扫描武库中已获得的山河器。"""
+def _cmd_scan_owned(args: argparse.Namespace, reconcile: bool) -> tuple[Path, ScanResult]:
+    """扫描武库已获得的山河器，返回输出路径和结果。"""
     _safe_print("⚠️  警告：自动化点击可能违反游戏用户协议，请自行承担风险。")
     backend = _create_ocr_backend(args.ocr_backend)
     if isinstance(backend, PlaceholderOCRBackend):
@@ -354,18 +362,50 @@ def cmd_scan_wuku(args: argparse.Namespace) -> None:
         confidence_threshold=args.scan_confidence,
         output_dir=args.scan_wuku_output.parent if args.scan_wuku_output else None,
     )
-    result = scanner.run()
+    result = scanner.run(reconcile=reconcile)
+    result.screenshots["_owned_total"] = owned_total
+    result.screenshots["_total"] = total
     output = scanner.save(result, args.scan_wuku_output)
+    return output, result
+
+
+def cmd_scan_wuku(args: argparse.Namespace) -> None:
+    """扫描武库中已获得的山河器（JSON 摘要输出）。"""
+    output, result = _cmd_scan_owned(args, reconcile=True)
     _safe_print_json(
         {
             "output": str(output),
             "high_confidence": len(result.shanheqis),
             "low_confidence": len(result.low_confidence),
-            "total": len(result.shanheqis) + len(result.low_confidence),
-            "owned_count_from_search": owned_total,
-            "total_count_from_search": total,
+            "total": len(result.shanheqis),
+            "owned_count_from_search": result.screenshots.get("_owned_total"),
+            "total_count_from_search": result.screenshots.get("_total"),
+            "quality_summary": result.quality_summary,
         }
     )
+
+
+def cmd_scan_all_owned(args: argparse.Namespace) -> None:
+    """一键扫描所有已获得的山河器，输出完整数据并打印人类可读摘要。"""
+    output, result = _cmd_scan_owned(args, reconcile=True)
+
+    print(f"\n[完成] 所有品质扫描完毕")
+    print(f"输出文件：{output}")
+    print(f"总计获得：{len(result.shanheqis)} 个山河器")
+    for quality in ("朴素", "精巧", "瑰丽", "绝世"):
+        summary = result.quality_summary.get(quality, {})
+        detected = summary.get("detected", 0)
+        expected = summary.get("expected", 0)
+        reconciled = summary.get("reconciled", 0)
+        print(f"  {quality}：{detected}/{expected} 个", end="")
+        if reconciled:
+            print(f"（其中 {reconciled} 个由漏扫兜底补齐）", end="")
+        print()
+    if result.low_confidence:
+        print(f"低置信记录：{len(result.low_confidence)} 条")
+
+    # 将收集度也写入 screenshots 字段，供下游读取
+    result.screenshots["output"] = str(output)
 
 
 def _parse_click_coord(s: str) -> tuple[int, int]:
@@ -538,6 +578,8 @@ def main() -> None:
         cmd_snapshot(args)
     elif args.ocr_sample is not None:
         cmd_ocr_sample(args)
+    elif args.scan_all_owned:
+        cmd_scan_all_owned(args)
     elif args.scan_wuku:
         cmd_scan_wuku(args)
     else:

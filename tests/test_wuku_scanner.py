@@ -1,10 +1,13 @@
 """WukuScanner 核心逻辑单元测试（不依赖真实窗口/OCR）。"""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from shq.models import Element, Quality, Shanheqi, ShanheqiType
 from shq.scanner.ocr_scanner import PlaceholderOCRBackend
-from shq.scanner.wuku_scanner import WukuScanner
+from shq.scanner.wuku_scanner import ScanResult, WukuScanner
 
 
 class TestWukuScannerFinalize(unittest.TestCase):
@@ -67,6 +70,45 @@ class TestWukuScannerFinalize(unittest.TestCase):
 
         c = self._make_shq(name="恶来双戟", quality=Quality.SIMPLE)
         self.assertTrue(self.scanner._is_duplicate(a, [c]))
+
+
+class TestWukuScannerSave(unittest.TestCase):
+    def setUp(self):
+        self.scanner = WukuScanner(ocr_backend=PlaceholderOCRBackend())
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        for f in self.tmp.iterdir():
+            f.unlink()
+        self.tmp.rmdir()
+
+    def test_save_includes_quality_summary_and_reconciliation(self):
+        result = ScanResult()
+        result.shanheqis.append(
+            Shanheqi(
+                id="wuku_朴素_普通_测试_5",
+                name="测试",
+                quality=Quality.SIMPLE,
+                element=Element.METAL,
+                level=5,
+                base_score=100.0,
+            )
+        )
+        result.quality_summary = {
+            "朴素": {"expected": 20, "detected": 1, "missing": 19, "reconciled": 0}
+        }
+        result.reconciliation_report = [
+            {"missing": "缺失项", "action": "未找到可信匹配", "best_score": 0.0}
+        ]
+
+        output = self.scanner.save(result, self.tmp / "out.json")
+        data = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(data["total_owned"], 1)
+        self.assertIn("quality_summary", data)
+        self.assertEqual(data["quality_summary"]["朴素"]["detected"], 1)
+        self.assertIn("reconciliation_reports", data)
+        self.assertEqual(len(data["reconciliation_reports"]), 1)
 
 
 if __name__ == "__main__":
