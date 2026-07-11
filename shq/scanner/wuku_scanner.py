@@ -51,15 +51,19 @@ ELEMENT_ICON_ROI = ROI("element", 1090, 90, 70, 70)
 MOUSEEVENTF_WHEEL = 0x0800
 WHEEL_DELTA = 120
 
-# 武库左上角品质下拉框坐标（基于 1334x750 客户区）
+# 武库左上角品质下拉框常量（基于 1334x750 客户区）
+# 下拉框基础顺序；展开时会排除当前选中项，其余四项保持该顺序
+_QUALITY_BASE_ORDER = ("全部", "朴素", "精巧", "瑰丽", "绝世")
+
+# 点击此处打开/关闭下拉框
 QUALITY_DROPDOWN_BUTTON = (140, 119)
-QUALITY_OPTION_POS = {
-    "全部": (140, 119),
-    "朴素": (160, 184),
-    "精巧": (160, 255),
-    "瑰丽": (160, 326),
-    "绝世": (180, 396),
-}
+# 展开后选项的 x 坐标与首个选项 y 坐标、间距
+QUALITY_OPTION_X = 160
+QUALITY_FIRST_OPTION_Y = 184
+QUALITY_OPTION_SPACING = 71
+
+# 关闭状态下拉框当前品质文字区域（仅用于 OCR 识别当前选中项）
+QUALITY_CURRENT_TEXT_ROI = ROI("quality_current", 80, 100, 120, 40)
 
 
 def _safe_print(text: str) -> None:
@@ -108,6 +112,7 @@ class PendingDetail:
     grid_img_path: Path
     center_x: int = 0
     center_y: int = 0
+    derived_tags: List[str] = field(default_factory=list)
 
 
 class WukuScanner:
@@ -245,19 +250,66 @@ class WukuScanner:
             time.sleep(0.15)
         time.sleep(0.5)
 
+    def _detect_current_quality(self, img: np.ndarray) -> Optional[str]:
+        """OCR 识别关闭状态下拉框当前显示的品质。"""
+        crop = QUALITY_CURRENT_TEXT_ROI.crop(img)
+        for text, _ in self.backend.recognize(crop):
+            text = text.strip()
+            if text in _QUALITY_BASE_ORDER:
+                return text
+        return None
+
     def _select_quality(self, quality: str) -> None:
-        """通过左上角下拉框选择指定品质。"""
-        if quality not in QUALITY_OPTION_POS:
-            raise ValueError(f"不支持的品质：{quality}，可选：{list(QUALITY_OPTION_POS.keys())}")
+        """根据当前选中品质和固定坐标切换到下拉框目标品质。
+
+        下拉框展开后只显示 4 个选项（排除当前选中），但保持基础顺序：
+        全部 / 朴素 / 精巧 / 瑰丽 / 绝世。
+        因此目标品质的实际点击位置会随当前选中项变化，需要动态计算。
+        """
+        if quality not in _QUALITY_BASE_ORDER:
+            raise ValueError(
+                f"不支持的品质：{quality}，可选：{list(_QUALITY_BASE_ORDER)}"
+            )
 
         _safe_print(f"[品质] 选择：{quality}")
-        # 打开下拉框
-        self._click_client(QUALITY_DROPDOWN_BUTTON[0], QUALITY_DROPDOWN_BUTTON[1], delay=0.5)
-        time.sleep(0.3)
-        # 点击目标品质
-        pos = QUALITY_OPTION_POS[quality]
-        self._click_client(pos[0], pos[1], delay=0.5)
-        time.sleep(0.8)  # 等待网格刷新
+        for attempt in range(5):
+            img = self._capture(f"_quality_select_{attempt}")
+            current = self._detect_current_quality(img)
+
+            if current == quality:
+                _safe_print(f"[品质] 当前已是 {quality}，无需切换")
+                return
+
+            # 兜底：若 OCR 没识别到当前品质，假设为“全部”
+            current = current or "全部"
+
+            # 打开下拉框
+            self._click_client(
+                QUALITY_DROPDOWN_BUTTON[0], QUALITY_DROPDOWN_BUTTON[1], delay=0.5
+            )
+            time.sleep(0.4)
+
+            # 计算目标品质在展开列表中的顺序位置
+            shown = [q for q in _QUALITY_BASE_ORDER if q != current]
+            if quality not in shown:
+                _safe_print(f"[品质] 计算出错：{quality} 不在 {current} 展开列表中，重试")
+                time.sleep(0.3)
+                continue
+            shown_index = shown.index(quality)
+            target_y = QUALITY_FIRST_OPTION_Y + shown_index * QUALITY_OPTION_SPACING
+
+            _safe_print(f"[品质] 当前={current}，目标={quality} 在展开列表第 {shown_index} 位")
+            self._click_client(QUALITY_OPTION_X, target_y, delay=0.5)
+            time.sleep(0.6)
+
+            # 验证
+            img = self._capture(f"_quality_verify_{attempt}")
+            if self._detect_current_quality(img) == quality:
+                _safe_print(f"[品质] 已切换到 {quality}")
+                return
+            _safe_print(f"[品质] 验证失败，重试")
+
+        raise RuntimeError(f"无法选择品质：{quality}")
 
     def _scroll_to_top(self) -> None:
         """持续向上滚动，直到连续两屏网格画面几乎相同。"""
@@ -283,8 +335,12 @@ class WukuScanner:
     # 网格扫描
     # ------------------------------------------------------------------
     def _detect_cells(self, img: np.ndarray) -> List[CellInfo]:
-        """基于 OCR 文本框聚类，定位武库网格中的每个格子。"""
-        grid_x, grid_y, grid_w, grid_h = 60, 140, 500, 560
+        """基于 OCR 文本框聚类，定位武库网格中的每个格子。
+
+        网格 ROI 向下延伸到窗口底部（y=140~750），确保最底行 item 下方的
+        派生素蕴小字也能被纳入识别范围。
+        """
+        grid_x, grid_y, grid_w, grid_h = 60, 140, 500, 610
         grid_crop = img[grid_y : grid_y + grid_h, grid_x : grid_x + grid_w]
         results = self.backend.recognize_with_boxes(grid_crop)
 
@@ -380,8 +436,8 @@ class WukuScanner:
     @staticmethod
     def _grid_hash(grid_img: np.ndarray) -> str:
         """计算网格区域 dhash，用于判断滚动是否到达底部。"""
-        # 武库网格大致区域
-        crop = grid_img[140:700, 60:560]
+        # 武库网格大致区域，与 _detect_cells 保持一致
+        crop = grid_img[140:750, 60:560]
         if crop.size == 0:
             return ""
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -672,11 +728,12 @@ class WukuScanner:
                 _safe_print(f"[名字校正] {cell_name} -> {canonical_name}")
                 cell_name = canonical_name
 
-            # 构造 CellInfo，保留原始格子坐标以支持特殊标签检测
+            # 构造 CellInfo，保留原始格子坐标与网格中识别到的派生素蕴
             cell = CellInfo(
                 center_x=pending.center_x,
                 center_y=pending.center_y,
                 name=cell_name,
+                derived_tags=pending.derived_tags,
             )
             parsed = self._parse_detail_impl(
                 detail_img,
@@ -797,15 +854,19 @@ class WukuScanner:
         futures: Dict["concurrent.futures.Future", PendingDetail] = {}
 
         while step < max_steps:
+            quality_prefix = self._current_quality or "unknown"
+
             _safe_print(f"\n[扫描] 第 {step} 屏")
-            grid_img = self._capture(f"grid_step_{step:02d}")
+            grid_img = self._capture(f"grid_step_{quality_prefix}_{step:02d}")
             cells = self._detect_cells(grid_img)
 
             top_name = next((c.name for c in cells if c.name), None)
             _safe_print(f"       顶部：{top_name}，本屏格子数：{len(cells)}")
 
             # 保存本屏网格图，供消费者解析玄枢/卓异/品质
-            grid_path = self.output_dir / f"grid_step_{step:02d}.png"
+            grid_path = (
+                self.output_dir / f"grid_step_{quality_prefix}_{step:02d}.png"
+            )
             cv2.imwrite(str(grid_path), grid_img)
 
             # 逐个点击所有 cell（不管是否看起来已获取）
@@ -832,11 +893,11 @@ class WukuScanner:
                 )
                 self._click_client(cell.center_x, cell.center_y, delay=0.6)
                 detail_img = self._capture(
-                    f"detail_{step:02d}_{cell.row_in_screen}_{cell.col}"
+                    f"detail_{quality_prefix}_{step:02d}_{cell.row_in_screen}_{cell.col}"
                 )
                 detail_path = (
                     self.output_dir
-                    / f"detail_{step:02d}_{cell.row_in_screen}_{cell.col}.png"
+                    / f"detail_{quality_prefix}_{step:02d}_{cell.row_in_screen}_{cell.col}.png"
                 )
                 cv2.imwrite(str(detail_path), detail_img)
 
@@ -849,6 +910,7 @@ class WukuScanner:
                     grid_img_path=grid_path,
                     center_x=cell.center_x,
                     center_y=cell.center_y,
+                    derived_tags=cell.derived_tags,
                 )
                 pending_count += 1
                 future = executor.submit(self._consume_detail, pending)
