@@ -6,7 +6,10 @@ from .manual_importer import ManualImporter
 from .navigation_controller import NavigationController, auto_navigate_to_wuku
 from .ocr_scanner import EasyOCRBackend, OCRBackend, PlaceholderOCRBackend, RapidOCRBackend, ShanheqiOCR
 from .process_finder import ProcessFinder, ProcessInfo, ProcessMatchRule
+from .search_collector import SearchCollector
 from .window_capture import WindowCapture, capture_game_window
+from .wuku_navigator import WukuNavigator
+from .wuku_scanner import WukuScanner
 
 __all__ = [
     "Scanner",
@@ -21,7 +24,10 @@ __all__ = [
     "InputSimulator",
     "NavigationController",
     "auto_navigate_to_wuku",
+    "WukuNavigator",
+    "SearchCollector",
     "ProcessFinder",
     "ProcessInfo",
     "ProcessMatchRule",
+    "WukuScanner",
 ]

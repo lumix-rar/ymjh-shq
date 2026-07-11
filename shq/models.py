@@ -43,6 +43,7 @@ class ShanheqiType(Enum):
 
     NORMAL = "普通"
     XUANSHU = "玄枢"       # 特殊山河器，镶嵌在背面区域中心有额外加成
+    ZHUOYI = "卓异"        # 另一种特殊山河器（界面右上角黄色标记）
 
 
 class SlotPosition(Enum):
@@ -103,6 +104,8 @@ class Shanheqi:
     gongguan_level: int = 0
     base_score: float = 0.0   # TODO：基础评分 = 品质得分 + 词条得分 + ...
     affixes: List[Affix] = field(default_factory=list)
+    # 派生素蕴名称列表（如起势、承势、金实等），从武库界面直接读取
+    derived_affixes: List[str] = field(default_factory=list)
     # TODO：强化、共贯、重塑相关状态
     stats: Dict[str, float] = field(default_factory=dict)  # 属性：气血、攻击、防御等
     # TODO：山河器标签，用于限制某些孔位（如玄枢孔位）

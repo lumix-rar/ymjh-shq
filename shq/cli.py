@@ -11,10 +11,14 @@ from shq.scanner import (
     InputSimulator,
     ManualImporter,
     NavigationController,
+    PlaceholderOCRBackend,
     ProcessFinder,
     RapidOCRBackend,
+    SearchCollector,
     ShanheqiOCR,
     WindowCapture,
+    WukuNavigator,
+    WukuScanner,
     capture_game_window,
 )
 from shq.solver import BruteForceSolver, GreedySolver
@@ -95,6 +99,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="截取窗口并导出所有 OCR ROI 到指定目录（供人工标注）",
+    )
+    parser.add_argument(
+        "--scan-wuku",
+        action="store_true",
+        help="扫描武库中已获得的山河器（需 OCR 后端 rapidocr/easyocr）",
+    )
+    parser.add_argument(
+        "--scan-wuku-output",
+        type=Path,
+        default=None,
+        help="武库扫描结果输出 JSON 路径（默认：./wuku_scan/owned_shanheqis.json）",
+    )
+    parser.add_argument(
+        "--scan-confidence",
+        type=float,
+        default=0.5,
+        help="OCR 置信度阈值，低于此值进入低置信列表等待人工录入（默认 0.5）",
     )
     parser.add_argument(
         "--ocr-backend",
@@ -306,6 +327,47 @@ def cmd_ocr_sample(args: argparse.Namespace) -> None:
         print(f"  - {p}")
 
 
+def cmd_scan_wuku(args: argparse.Namespace) -> None:
+    """扫描武库中已获得的山河器。"""
+    _safe_print("⚠️  警告：自动化点击可能违反游戏用户协议，请自行承担风险。")
+    backend = _create_ocr_backend(args.ocr_backend)
+    if isinstance(backend, PlaceholderOCRBackend):
+        raise SystemExit("扫描武库必须使用真实 OCR 后端，请指定 --ocr-backend rapidocr")
+
+    # 1. 导航到搜寻，读取收集度
+    navigator = WukuNavigator(ocr_backend=backend)
+    if not navigator.navigate_to("搜寻"):
+        raise SystemExit("导航到搜寻界面失败")
+    img = capture_game_window(fixed_size=True)
+    if img is None:
+        raise SystemExit("无法截取游戏窗口")
+    owned_total, total = SearchCollector(backend).read(img)
+    _safe_print(f"[收集度] {owned_total}/{total}")
+
+    # 2. 导航到武库
+    if not navigator.navigate_to("武库"):
+        raise SystemExit("导航到武库界面失败")
+
+    # 3. 执行武库扫描
+    scanner = WukuScanner(
+        ocr_backend=backend,
+        confidence_threshold=args.scan_confidence,
+        output_dir=args.scan_wuku_output.parent if args.scan_wuku_output else None,
+    )
+    result = scanner.run()
+    output = scanner.save(result, args.scan_wuku_output)
+    _safe_print_json(
+        {
+            "output": str(output),
+            "high_confidence": len(result.shanheqis),
+            "low_confidence": len(result.low_confidence),
+            "total": len(result.shanheqis) + len(result.low_confidence),
+            "owned_count_from_search": owned_total,
+            "total_count_from_search": total,
+        }
+    )
+
+
 def _parse_click_coord(s: str) -> tuple[int, int]:
     """解析 x,y 坐标字符串。"""
     parts = s.split(",")
@@ -476,6 +538,8 @@ def main() -> None:
         cmd_snapshot(args)
     elif args.ocr_sample is not None:
         cmd_ocr_sample(args)
+    elif args.scan_wuku:
+        cmd_scan_wuku(args)
     else:
         cmd_solve(args)
 

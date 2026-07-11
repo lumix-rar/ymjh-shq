@@ -230,36 +230,49 @@ class NavigationController:
                 print("当前已在武库界面")
                 return True
 
-            clicked_y = self._click_nav_button(wuku)
-            time.sleep(0.8)
+            self._click_nav_button(wuku)
+            time.sleep(1.5)
 
-            # 点击后检测实际高亮了哪个标签，自动学习 y 偏移
+            # 点击后验证是否已进入武库
             img = self.screenshot()
-            selected = self._detect_selected_nav_label(img)
-            if selected and selected != "武库":
-                selected_btn = next((b for b in buttons if b.name == selected), None)
-                if selected_btn is not None:
-                    self._nav_offset_y = clicked_y - selected_btn.center_y
-                    print(f"[调试] 检测到 y 偏移：{self._nav_offset_y}（实际点到 {selected}）")
+            if self._is_in_wuku(img):
+                print("已切换到武库界面")
+                return True
+
+        # 最后再验证一次（有些界面切换动画较慢）
+        time.sleep(1.0)
+        img = self.screenshot()
+        if self._is_in_wuku(img):
+            print("已切换到武库界面（最终验证）")
+            return True
 
         if manual_fallback:
             return self._manual_fallback_to_wuku()
         return False
 
-    def _click_nav_button(self, btn: NavButton) -> int:
-        """点击导航按钮，应用已校准的 y 偏移。
+    # 右侧导航按钮在 1334x750 下的相对位置（图标中心）
+    NAV_POSITIONS = {
+        "搜寻": (0.94, 0.16),
+        "复归": (0.94, 0.33),
+        "灵鉴": (0.94, 0.49),
+        "武库": (0.94, 0.71),
+    }
 
-        返回实际点击的客户区 y 坐标。
+    def _click_nav_button(self, btn: NavButton) -> int:
+        """点击导航按钮。
+
+        OCR 识别到的文字坐标不一定在按钮可点击中心（竖排文字/图标分离），
+        因此使用预设的相对位置点击，文字坐标仅用于确认按钮存在。
         """
         cap = self._get_window_capture()
-        click_y = btn.center_y
-        if self._nav_offset_y is not None:
-            click_y = btn.center_y + self._nav_offset_y
-            print(f"[调试] 点击 {btn.name}：({btn.center_x}, {btn.center_y}) + 偏移 {self._nav_offset_y} -> ({btn.center_x}, {click_y})")
-        else:
-            print(f"[调试] 点击 {btn.name}：({btn.center_x}, {click_y})")
+        img = self.screenshot()
+        h, w = img.shape[:2]
+        rel = self.NAV_POSITIONS.get(btn.name, (0.94, 0.71))
+        click_x = int(w * rel[0])
+        click_y = int(h * rel[1])
+        print(f"[调试] 点击 {btn.name}：({click_x}, {click_y})")
         self._sim.click_on_window(
-            cap.hwnd, btn.center_x, click_y, attach_thread=self._attach_thread
+            cap.hwnd, click_x, click_y, attach_thread=self._attach_thread
         )
         return click_y
 
@@ -323,9 +336,21 @@ class NavigationController:
     def _is_in_wuku(self, img: np.ndarray) -> bool:
         """判断当前截图是否已在武库界面。
 
-        通过右侧导航标签的高亮状态判断当前所在子界面。
+        综合判断：
+        1. 画面左上角区域出现武库特有的“全部”下拉菜单。
+        2. 右侧导航标签包含“武库”。
+        满足 (1) 即可认为已在武库；(1) 不满足时再尝试用高亮标签辅助判断。
         """
-        return self._detect_selected_nav_label(img) == "武库"
+        h, w = img.shape[:2]
+        top_left = img[0 : int(h * 0.15), 0 : int(w * 0.3)]
+        texts = [self._normalize_label(t) for t, _ in self.ocr.recognize(top_left)]
+        has_all_dropdown = "全部" in texts
+
+        if has_all_dropdown:
+            return True
+
+        selected = self._detect_selected_nav_label(img)
+        return selected == "武库"
 
 
 def auto_navigate_to_wuku(ocr_backend: Optional[OCRBackend] = None) -> bool:
