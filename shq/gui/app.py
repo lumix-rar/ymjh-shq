@@ -16,6 +16,7 @@ from shq.gui.widgets import (
     StatusBar,
     WeightEditor,
 )
+from shq.gui.workers import list_available_ocr_backends
 
 
 class ShqGuiApplication:
@@ -119,15 +120,23 @@ class ShqGuiApplication:
         ).pack(side=tk.LEFT, padx=2)
 
         ttk.Label(toolbar, text="OCR：").pack(side=tk.LEFT, padx=(20, 0))
-        self.ocr_var = tk.StringVar(value="rapidocr")
+        available_ocrs = list_available_ocr_backends()
+        self.ocr_var = tk.StringVar(value=available_ocrs[0] if available_ocrs else "")
         ocr_combo = ttk.Combobox(
             toolbar,
             textvariable=self.ocr_var,
-            values=["rapidocr", "easyocr"],
+            values=available_ocrs,
             state="readonly",
             width=10,
         )
         ocr_combo.pack(side=tk.LEFT)
+
+        if not available_ocrs:
+            ttk.Label(
+                toolbar,
+                text="（未检测到可用 OCR，扫描功能不可用）",
+                foreground="red",
+            ).pack(side=tk.LEFT, padx=(5, 0))
 
     def _build_main_area(self) -> None:
         main_frame = ttk.Frame(self.root)

@@ -197,3 +197,19 @@ def _create_ocr_backend(name: str) -> OCRBackend:
     if name == "rapidocr":
         return RapidOCRBackend()
     return PlaceholderOCRBackend()
+
+
+def list_available_ocr_backends() -> list[str]:
+    """返回当前环境已安装的 OCR 后端名称列表。"""
+    backends: list[str] = []
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        backends.append("rapidocr")
+    except Exception:
+        pass
+    try:
+        import easyocr  # noqa: F401
+        backends.append("easyocr")
+    except Exception:
+        pass
+    return backends

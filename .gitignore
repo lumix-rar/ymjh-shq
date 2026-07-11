@@ -48,3 +48,8 @@ wuku_scan/
 lingjian_scan/
 /*.png
 node_modules/
+
+# PyInstaller
+build/
+dist/
+*.spec
