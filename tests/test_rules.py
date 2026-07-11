@@ -135,7 +135,7 @@ class TestMomentumEffects:
         assert ev.slot_scores["test_slot_2"] == pytest.approx(5313.0, abs=0.5)
 
     def test_no_momentum_no_interaction(self, rules: YMJHDefaultRuleSet):
-        """木 4920 -> 火 2300，无起势/承势，无加成，总得分 7220。"""
+        """木 4920 -> 火 2300，无起势/承势，基础相生 +15%，总得分 7565。"""
         region = _make_region("test", 2, [(1, 2)])
         lingjian = _make_lingjian(region)
         shq1 = _shq("s1", "木", Element.WOOD, 4920.0)
@@ -144,8 +144,8 @@ class TestMomentumEffects:
 
         ev = rules.evaluate([shq1, shq2], lingjian, placement)
 
-        assert ev.total_score == pytest.approx(7220.0, abs=0.5)
-        assert ev.slot_scores["test_slot_2"] == pytest.approx(2300.0, abs=0.5)
+        assert ev.total_score == pytest.approx(7565.0, abs=0.5)
+        assert ev.slot_scores["test_slot_2"] == pytest.approx(2645.0, abs=0.5)
 
     def test_chengshi_as_target_mutual(self, rules: YMJHDefaultRuleSet):
         """木 4920 -> 火承势 3000，总得分 8370，火承势变 3450。"""
@@ -269,10 +269,10 @@ class TestBackCenter:
 
         ev = rules.evaluate(shqs, lingjian, placement)
 
-        # 正面 5 个普通山河器各 1000 分 = 5000
-        assert ev.region_scores["guanhe"] == pytest.approx(5000.0, abs=0.5)
-        # 背面加成 = 5000 * 20% = 1000
-        assert ev.back_scores["guanhe"] == pytest.approx(1000.0, abs=0.5)
+        # 正面 5 个普通山河器形成相生循环，各 1000 + 150 = 1150，共 5750
+        assert ev.region_scores["guanhe"] == pytest.approx(5750.0, abs=0.5)
+        # 背面加成 = 5750 * 20% = 1150
+        assert ev.back_scores["guanhe"] == pytest.approx(1150.0, abs=0.5)
         # 6 号位分数不计入正面
         assert "guanhe_slot_6" not in ev.slot_scores or ev.slot_scores.get("guanhe_slot_6") == 0.0
 
@@ -311,7 +311,8 @@ class TestBackCenter:
 
         ev = rules.evaluate(shqs, lingjian, placement)
 
-        # 正面 5 个普通山河器 5000 + 6 号位残秋刃 5000 = 10000
-        assert ev.region_scores["haiguan"] == pytest.approx(10000.0, abs=0.5)
-        # 背面加成 = 10000 * 20% = 2000
-        assert ev.back_scores["haiguan"] == pytest.approx(2000.0, abs=0.5)
+        # 正面 5 个普通山河器 + 6 号位残秋刃 5000
+        # 普通山河器：孔2/孔3各受一次相生 +150，其余 1000，共 10300
+        assert ev.region_scores["haiguan"] == pytest.approx(10300.0, abs=0.5)
+        # 背面加成 = 10300 * 20% = 2060
+        assert ev.back_scores["haiguan"] == pytest.approx(2060.0, abs=0.5)

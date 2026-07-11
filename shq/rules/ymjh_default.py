@@ -174,7 +174,7 @@ class YMJHDefaultRuleSet(RuleSet):
                     continue
             state.slot_scores[slot.id] = 0.0
 
-        # 同属性加成
+        # 同属性对效果：同属性双方各 +7.5%，不同属性双方各 -7.5%
         for a_num, b_num in region.same_element_pairs:
             a_slot = self._slot_by_number(front_slots, a_num)
             b_slot = self._slot_by_number(front_slots, b_num)
@@ -188,13 +188,13 @@ class YMJHDefaultRuleSet(RuleSet):
             b_shq = shq_map.get(b_shq_id)
             if not a_shq or not b_shq:
                 continue
-            if a_shq.element.value != b_shq.element.value:
-                continue
             bonus_rate = float(self._interaction.get("same_element_bonus_rate", 0.075))
+            if a_shq.element.value != b_shq.element.value:
+                bonus_rate = -bonus_rate
             state.slot_scores[a_slot.id] += self._interaction_base(a_shq) * bonus_rate
             state.slot_scores[b_slot.id] += self._interaction_base(b_shq) * bonus_rate
             details.append(
-                f"{region.name} 孔{a_num}↔孔{b_num} 同属性 {a_shq.element.value} 各+{bonus_rate*100:.1f}%"
+                f"{region.name} 孔{a_num}↔孔{b_num} 同属性效果 {'+' if bonus_rate >= 0 else ''}{bonus_rate*100:.1f}%"
             )
 
         # 生克加成
