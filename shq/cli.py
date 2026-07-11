@@ -17,11 +17,10 @@ from shq.scanner import (
     ProcessFinder,
     RapidOCRBackend,
     ScanResult,
-    SearchCollector,
     ShanheqiOCR,
     WindowCapture,
     WukuNavigator,
-    WukuScanner,
+    WukuReader,
     capture_game_window,
 )
 from shq.solver import BruteForceSolver, GreedySolver
@@ -342,30 +341,13 @@ def _cmd_scan_owned(args: argparse.Namespace, reconcile: bool) -> tuple[Path, Sc
     if isinstance(backend, PlaceholderOCRBackend):
         raise SystemExit("扫描武库必须使用真实 OCR 后端，请指定 --ocr-backend rapidocr")
 
-    # 1. 导航到搜寻，读取收集度
-    navigator = WukuNavigator(ocr_backend=backend)
-    if not navigator.navigate_to("搜寻"):
-        raise SystemExit("导航到搜寻界面失败")
-    img = capture_game_window(fixed_size=True)
-    if img is None:
-        raise SystemExit("无法截取游戏窗口")
-    owned_total, total = SearchCollector(backend).read(img)
-    _safe_print(f"[收集度] {owned_total}/{total}")
-
-    # 2. 导航到武库
-    if not navigator.navigate_to("武库"):
-        raise SystemExit("导航到武库界面失败")
-
-    # 3. 执行武库扫描
-    scanner = WukuScanner(
+    reader = WukuReader(
         ocr_backend=backend,
         confidence_threshold=args.scan_confidence,
         output_dir=args.scan_wuku_output.parent if args.scan_wuku_output else None,
     )
-    result = scanner.run(reconcile=reconcile)
-    result.screenshots["_owned_total"] = owned_total
-    result.screenshots["_total"] = total
-    output = scanner.save(result, args.scan_wuku_output)
+    result = reader.read(reconcile=reconcile)
+    output = reader.scanner.save(result, args.scan_wuku_output)
     return output, result
 
 

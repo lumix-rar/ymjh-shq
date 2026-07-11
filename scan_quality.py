@@ -21,9 +21,7 @@ from pathlib import Path
 
 from shq.scanner.name_resolver import ShanheqiNameResolver
 from shq.scanner.ocr_scanner import RapidOCRBackend
-from shq.scanner.reconciler import ScanReconciler
-from shq.scanner.wuku_navigator import WukuNavigator
-from shq.scanner.wuku_scanner import WukuScanner
+from shq.scanner.readers import WukuReader
 
 
 VALID_QUALITIES = ("朴素", "精巧", "瑰丽", "绝世")
@@ -70,26 +68,16 @@ def main() -> None:
 
     backend = RapidOCRBackend()
 
-    # 导航到武库
-    navigator = WukuNavigator(ocr_backend=backend)
-    if not navigator.navigate_to("武库"):
-        raise SystemExit("导航到武库界面失败")
-
-    # 扫描指定品质
-    scanner = WukuScanner(
+    # 读取指定品质
+    reader = WukuReader(
         ocr_backend=backend,
         output_dir=args.output_dir,
         parse_workers=args.workers,
+        reconcile_threshold=args.reconcile_threshold,
     )
-    result = scanner.scan_quality(args.quality)
+    result = reader.read_quality(args.quality)
 
-    # 与底稿核对，并做漏扫兜底补齐
     resolver = ShanheqiNameResolver()
-    reconciler = ScanReconciler(resolver=resolver, score_threshold=args.reconcile_threshold)
-    result.shanheqis, reconciliation_report = reconciler.reconcile(
-        args.quality, result.shanheqis, result.low_confidence
-    )
-
     expected = set(resolver.list_by_quality(args.quality))
     detected = {s.name for s in result.shanheqis}
     missing = sorted(expected - detected)
@@ -123,7 +111,7 @@ def main() -> None:
             for s in result.shanheqis
         ],
         "low_confidence": result.low_confidence,
-        "reconciliation_report": reconciliation_report,
+        "reconciliation_report": result.reconciliation_report,
         "detected_names": sorted(detected),
         "detected_count": len(result.shanheqis),
         "expected_names": sorted(expected),
@@ -142,9 +130,9 @@ def main() -> None:
         print(f"  - {s.name} ({s.quality.value}, 等级 {s.level}, 评分 {s.base_score})")
     if result.low_confidence:
         print(f"另有 {len(result.low_confidence)} 个低置信记录，请核对。")
-    if reconciliation_report:
-        filled = [r for r in reconciliation_report if r.get("action") == "已补齐"]
-        unresolved = [r for r in reconciliation_report if r.get("action") != "已补齐"]
+    if result.reconciliation_report:
+        filled = [r for r in result.reconciliation_report if r.get("action") == "已补齐"]
+        unresolved = [r for r in result.reconciliation_report if r.get("action") != "已补齐"]
         if filled:
             print(f"\n漏扫兜底补齐 {len(filled)} 个：")
             for r in filled:
