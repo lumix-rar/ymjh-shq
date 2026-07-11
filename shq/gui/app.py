@@ -23,7 +23,7 @@ class ShqGuiApplication:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("山河器最优摆放求解器")
+        self.root.title("山河器最优摆放求解器 v1.0.0")
         self.root.geometry("1200x800")
         self.root.minsize(900, 600)
 
@@ -229,8 +229,10 @@ class ShqGuiApplication:
 
         messagebox.showinfo(
             "关于",
-            "山河器最优摆放求解器\n\n基于实测规则与局部搜索算法，"
-            "支持一键扫描、导入、权重配置与方案生成。",
+            "山河器最优摆放求解器 v1.0.0\n\n"
+            "基于实测规则与局部搜索算法，"
+            "支持一键扫描、导入、权重配置与方案生成。\n\n"
+            "作者：辰星换灯影",
             parent=self.root,
         )
 
@@ -239,14 +241,17 @@ class ShqGuiApplication:
 
         messagebox.showinfo(
             "使用说明",
-            "欢迎使用山河器最优摆放求解器！\n\n"
+            "欢迎使用山河器最优摆放求解器 v1.0.0！\n\n"
+            "【限制】本工具仅适用于 Windows PC 端《一梦江湖》官方客户端，"
+            "不支持模拟器、云游戏或其他平台。\n\n"
             "1. 进入游戏，打开【山河器-灵鉴】界面并保持不动。\n"
             "2. 如需自动扫描：确保游戏窗口可见，选择右上角 OCR 引擎，"
             "点击“一键扫描武库”或“一键扫描灵鉴”。\n"
             "3. 如已有 JSON 数据：点击“导入武库 JSON”或“导入孔位 JSON”。\n"
             "4. 在“山河器”和“灵鉴孔位”标签页核对数据，双击可编辑。\n"
             "5. 在右侧选择流派与权重，点击“一键生成”获得最优摆放方案。\n\n"
-            "提示：扫描过程请勿移动/点击游戏窗口，以免识别失败。",
+            "提示：扫描过程请勿移动/点击游戏窗口，以免识别失败。\n\n"
+            "作者：辰星换灯影",
             parent=self.root,
         )
 
