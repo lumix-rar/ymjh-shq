@@ -1,0 +1,125 @@
+{
+  "version": "1.0",
+  "description": "一梦江湖山河器摆放规则配置。数值来自公开攻略与用户实测，后续可随版本更新。",
+  "elements": {
+    "相生": {
+      "金": "水",
+      "水": "木",
+      "木": "火",
+      "火": "土",
+      "土": "金"
+    },
+    "相克": {
+      "金": "木",
+      "木": "土",
+      "土": "水",
+      "水": "火",
+      "火": "金"
+    }
+  },
+  "interaction": {
+    "mutual_bonus_rate": 0.15,
+    "mutual_penalty_rate": -0.15,
+    "same_element_bonus_rate": 0.075
+  },
+  "momentum": {
+    "普通": 0.0,
+    "起势": 1.45,
+    "承势": 2.55
+  },
+  "xshi_bonus_rate": 0.05,
+  "back_center": {
+    "专有加成": 0.20,
+    "非专有加成": 0.05
+  },
+  "regions": {
+    "yiji_meihua": {
+      "name": "驿寄梅花",
+      "slots": 2,
+      "connections": [[1, 2]],
+      "same_element_pairs": [],
+      "build_priority": {"输出": 5, "治疗": 5, "承伤": 5, "综合": 5}
+    },
+    "shuke_huaigui": {
+      "name": "戍客怀归",
+      "slots": 3,
+      "connections": [[1, 2], [2, 3], [3, 1]],
+      "same_element_pairs": [],
+      "build_priority": {"输出": 3, "治疗": 3, "承伤": 1, "综合": 3}
+    },
+    "changyan_fenghuo": {
+      "name": "长烟烽火",
+      "slots": 4,
+      "connections": [[4, 1], [4, 2], [4, 3]],
+      "same_element_pairs": [],
+      "build_priority": {"输出": 1, "治疗": 1, "承伤": 3, "综合": 1}
+    },
+    "huangquan_yedu": {
+      "name": "黄泉夜渡",
+      "slots": 4,
+      "connections": [[2, 4], [4, 3]],
+      "same_element_pairs": [[1, 4]],
+      "build_priority": {"输出": 4, "治疗": 4, "承伤": 4, "综合": 4}
+    },
+    "guanhe_daoyuan": {
+      "name": "关河道远",
+      "slots": 5,
+      "connections": [[1, 2], [2, 3], [3, 4], [4, 5], [5, 1]],
+      "same_element_pairs": [],
+      "build_priority": {"输出": 2, "治疗": 2, "承伤": 2, "综合": 2},
+      "back_config": {
+        "xuanshu_name": "空山寂",
+        "center_slot_number": 6,
+        "front_zero_score": true,
+        "back_adds_to_front": false
+      }
+    },
+    "haiguan_duanyun": {
+      "name": "骸关断云",
+      "slots": 5,
+      "connections": [[1, 2], [1, 5], [2, 3], [5, 4]],
+      "same_element_pairs": [[3, 4]],
+      "build_priority": {"输出": 5, "治疗": 5, "承伤": 5, "综合": 5},
+      "back_config": {
+        "xuanshu_name": "残秋刃",
+        "center_slot_number": 6,
+        "front_zero_score": true,
+        "back_adds_to_front": true
+      }
+    }
+  },
+  "build_weights": {
+    "输出": {
+      "changyan_fenghuo": 0.27,
+      "guanhe_daoyuan": 0.225,
+      "shuke_huaigui": 0.18,
+      "huangquan_yedu": 0.135,
+      "yiji_meihua": 0.09,
+      "haiguan_duanyun": 0.10
+    },
+    "治疗": {
+      "changyan_fenghuo": 0.36,
+      "guanhe_daoyuan": 0.18,
+      "shuke_huaigui": 0.135,
+      "huangquan_yedu": 0.135,
+      "yiji_meihua": 0.09,
+      "haiguan_duanyun": 0.10
+    },
+    "承伤": {
+      "shuke_huaigui": 0.315,
+      "guanhe_daoyuan": 0.225,
+      "changyan_fenghuo": 0.18,
+      "huangquan_yedu": 0.108,
+      "yiji_meihua": 0.072,
+      "haiguan_duanyun": 0.10
+    },
+    "综合": {
+      "changyan_fenghuo": 0.252,
+      "guanhe_daoyuan": 0.216,
+      "shuke_huaigui": 0.18,
+      "huangquan_yedu": 0.144,
+      "yiji_meihua": 0.108,
+      "haiguan_duanyun": 0.10
+    }
+  }
+}

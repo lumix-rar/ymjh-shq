@@ -116,6 +116,21 @@ class Shanheqi:
         """兼容性属性：素蕴列表。"""
         return self.affixes
 
+    @property
+    def derived_effects(self) -> List[str]:
+        """从派生素蕴名称中解析出的标准化效果名列表。"""
+        effects: List[str] = []
+        for name in self.derived_affixes:
+            if name in ("起势", "承势"):
+                effects.append(name)
+            elif name.endswith("实") and name[0] in ("金", "木", "水", "火", "土"):
+                effects.append("x实")
+        return effects
+
+    def has_effect(self, effect: str) -> bool:
+        """判断是否带有指定派生效果。"""
+        return effect in self.derived_effects
+
 
 @dataclass
 class Slot:
@@ -123,7 +138,11 @@ class Slot:
 
     id: str
     region_id: str
+    # 孔位在区域内的 1-based 编号，用于匹配规则配置中的连线与同属性对
+    number: int = 0
     position: SlotPosition = SlotPosition.NORMAL
+    # 是否为背面中心孔位（6号位）
+    is_back_center: bool = False
     # TODO：确认孔位是否有类型限制（如只能镶嵌特定种类山河器/玄枢山河器）
     allowed_tags: frozenset[str] = field(default_factory=frozenset)
     # 孔位培养带来的额外评分（不同用户不一致，需从用户数据读取）
@@ -156,6 +175,16 @@ class RegionEffect:
 
 
 @dataclass
+class BackRegionConfig:
+    """背面区域（6号位）配置。"""
+
+    xuanshu_name: str          # 专有玄枢山河器名称
+    center_slot_id: str        # 背面中心孔位 slot_id
+    front_zero_score: bool = True    # 专有山河器放正面时该孔是否拿 0 分
+    back_adds_to_front: bool = True  # 6号位山河器分数是否计入正面总分
+
+
+@dataclass
 class Region:
     """灵鉴区域（如驿寄梅花、长烟烽火、关河道远等）。"""
 
@@ -164,12 +193,21 @@ class Region:
     slots: List[Slot] = field(default_factory=list)
     connections: List[Connection] = field(default_factory=list)
     effects: List[RegionEffect] = field(default_factory=list)
+    # 同属性加成孔位对（用孔位 number 表示）
+    same_element_pairs: List[Tuple[int, int]] = field(default_factory=list)
+    # 背面区域配置（如关河道远·隐、骸关断云背面）
+    back_config: Optional[BackRegionConfig] = None
     # TODO：解锁下一区域/背面区域所需总评分
     unlock_required_score: Optional[float] = None
     # 关联的背面区域 ID（如关河道远 -> 关河道远·隐）
     back_region_id: Optional[str] = None
     # TODO：该区域对哪些流派收益较高（输出/治疗/承伤）
     recommended_for: List[str] = field(default_factory=list)
+
+    @property
+    def front_slots(self) -> List[Slot]:
+        """正面孔位列表（不含背面中心孔）。"""
+        return [s for s in self.slots if not getattr(s, "is_back_center", False)]
 
 
 @dataclass
@@ -202,9 +240,11 @@ class Placement:
     """一个具体的摆放方案：孔位 -> 山河器。"""
 
     mapping: Dict[str, str] = field(default_factory=dict)  # slot_id -> shanheqi_id
+    # 背面中心孔位（6号位）的放置方案
+    back_mapping: Dict[str, str] = field(default_factory=dict)
 
     def clone(self) -> Placement:
-        return Placement(dict(self.mapping))
+        return Placement(dict(self.mapping), dict(self.back_mapping))
 
 
 @dataclass
@@ -222,6 +262,10 @@ class Evaluation:
 
     total_score: float = 0.0
     region_scores: Dict[str, float] = field(default_factory=dict)
+    # 每个孔位的最终有效评分，用于调试与验证
+    slot_scores: Dict[str, float] = field(default_factory=dict)
+    # 背面区域额外加成，独立输出，不参与正面优化
+    back_scores: Dict[str, float] = field(default_factory=dict)
     stats: Dict[str, float] = field(default_factory=dict)
     details: List[str] = field(default_factory=list)
 

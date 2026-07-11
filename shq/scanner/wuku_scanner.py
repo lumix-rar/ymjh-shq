@@ -548,8 +548,19 @@ class WukuScanner:
                 if "复归" in line or not line.strip():
                     in_derived = False
 
-        element = WukuScanner._classify_element(detail_img)
-        if element is None:
+        # 五行：优先以第一个素蕴的五行作为权威值（用户实测规则）。
+        # 图标颜色识别仅作兜底与冲突校验。
+        visual_element = WukuScanner._classify_element(detail_img)
+        element = None
+        if affixes and affixes[0].element:
+            element = affixes[0].element
+            if visual_element is not None and visual_element != element:
+                issues.append(
+                    f"五行图标识别为{visual_element.value}，以首个素蕴{element.value}为准"
+                )
+        elif visual_element is not None:
+            element = visual_element
+        else:
             if affixes:
                 elems = [a.element for a in affixes if a.element]
                 if elems:

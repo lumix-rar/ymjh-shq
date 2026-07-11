@@ -8,6 +8,7 @@ from .ocr_scanner import EasyOCRBackend, OCRBackend, PlaceholderOCRBackend, Rapi
 from .process_finder import ProcessFinder, ProcessInfo, ProcessMatchRule
 from .readers import SlotCultivationReader, WukuReader
 from .search_collector import SearchCollector
+from .topology_loader import Topology, TopologyLoader
 from .window_capture import WindowCapture, capture_game_window
 from .wuku_navigator import WukuNavigator
 from .wuku_scanner import WukuScanner, ScanResult
@@ -34,4 +35,6 @@ __all__ = [
     "ScanResult",
     "WukuReader",
     "SlotCultivationReader",
+    "Topology",
+    "TopologyLoader",
 ]

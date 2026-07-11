@@ -19,17 +19,19 @@ from shq.scanner import (
     ScanResult,
     ShanheqiOCR,
     SlotCultivationReader,
+    TopologyLoader,
     WindowCapture,
     WukuNavigator,
     WukuReader,
     capture_game_window,
 )
-from shq.solver import BruteForceSolver, GreedySolver
+from shq.solver import BruteForceSolver, GreedySolver, LocalSearchSolver
 
 
 SOLVERS = {
     "brute": BruteForceSolver,
     "greedy": GreedySolver,
+    "local_search": LocalSearchSolver,
 }
 
 
@@ -43,10 +45,39 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="山河器与灵鉴 JSON 数据文件路径",
     )
     parser.add_argument(
+        "--optimize-placement",
+        action="store_true",
+        help="启用山河器最优摆放优化模式",
+    )
+    parser.add_argument(
+        "--wuku",
+        type=Path,
+        default=Path.cwd() / "wuku_scan" / "owned_shanheqis.json",
+        help="武库扫描结果 JSON 路径（默认 ./wuku_scan/owned_shanheqis.json）",
+    )
+    parser.add_argument(
+        "--slot-cultivation",
+        type=Path,
+        default=Path.cwd() / "lingjian_scan" / "slot_cultivation.json",
+        help="孔位培养扫描结果 JSON 路径（默认 ./lingjian_scan/slot_cultivation.json）",
+    )
+    parser.add_argument(
+        "--topology",
+        type=Path,
+        default=None,
+        help="灵鉴拓扑 JSON 路径（默认 data/lingjian_topology.json）",
+    )
+    parser.add_argument(
+        "--rules",
+        type=Path,
+        default=None,
+        help="游戏规则 JSON 路径（默认 data/ymjh_rules.json）",
+    )
+    parser.add_argument(
         "--target",
         type=str,
         default="total_score",
-        help="优化目标，例如 total_score/气血/攻击",
+        help="优化目标，例如 total_score/build_score",
     )
     parser.add_argument(
         "--build",
@@ -57,9 +88,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--solver",
         type=str,
-        default="greedy",
+        default="local_search",
         choices=list(SOLVERS.keys()),
-        help="求解算法",
+        help="求解算法：local_search（默认）/brute/greedy",
     )
     parser.add_argument(
         "--output",
@@ -201,6 +232,101 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _load_lingjian_for_optimization(
+    topology_path: Optional[Path],
+    rules_path: Optional[Path],
+    cultivation_path: Path,
+) -> "Lingjian":
+    """加载灵鉴拓扑、应用规则、回填孔位培养分。"""
+    from shq.models import Lingjian
+
+    loader = TopologyLoader(
+        path=topology_path,
+        rules_path=rules_path,
+    )
+    topology = loader.load()
+    lingjian = topology.lingjian
+
+    if not cultivation_path.exists():
+        return lingjian
+
+    data = json.loads(cultivation_path.read_text(encoding="utf-8"))
+    score_map: dict[str, float] = {}
+    for region_result in data.get("regions", []):
+        for slot in region_result.get("slots", []):
+            score_map[str(slot["slot_id"])] = float(slot.get("cultivation_score", 0.0))
+
+    for region in lingjian.regions:
+        for slot in region.slots:
+            slot.cultivation_score = score_map.get(slot.id, 0.0)
+
+    return lingjian
+
+
+def cmd_optimize_placement(args: argparse.Namespace) -> None:
+    """山河器最优摆放优化入口。"""
+    from shq.models import BuildPreference
+
+    if not args.wuku.exists():
+        raise SystemExit(f"--wuku 文件不存在：{args.wuku}")
+
+    # 1. 加载山河器
+    importer = ManualImporter(args.wuku)
+    shqs = importer.scan_shanheqis()
+    if not shqs:
+        raise SystemExit(f"未从 {args.wuku} 中读取到山河器")
+
+    # 2. 加载灵鉴拓扑与培养分
+    lingjian = _load_lingjian_for_optimization(
+        topology_path=args.topology,
+        rules_path=args.rules,
+        cultivation_path=args.slot_cultivation,
+    )
+
+    # 3. 偏好与规则
+    preference = BuildPreference(build=args.build)
+    rules = YMJHDefaultRuleSet(rules_path=args.rules)
+
+    # 4. 求解
+    solver = SOLVERS[args.solver]()
+    solution = solver.solve(shqs, lingjian, rules, args.target, preference)
+
+    # 5. 组装结果
+    region_name_map = {r.id: r.name for r in lingjian.regions}
+    placement_result = {
+        "正面": {
+            region_name_map.get(r.id, r.id): {
+                slot.number: solution.placement.mapping.get(slot.id)
+                for slot in r.front_slots
+            }
+            for r in lingjian.regions
+        },
+        "背面": solution.placement.back_mapping,
+    }
+
+    result = {
+        "solver": solver.name,
+        "target": solution.target,
+        "build": preference.build,
+        "score": rules.score(solution.evaluation, solution.target, preference),
+        "total_score": solution.evaluation.total_score,
+        "region_scores": {
+            region_name_map.get(rid, rid): score
+            for rid, score in solution.evaluation.region_scores.items()
+        },
+        "back_scores": {
+            region_name_map.get(rid, rid): score
+            for rid, score in solution.evaluation.back_scores.items()
+        },
+        "placement": placement_result,
+        "description": solution.description,
+    }
+
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.output:
+        args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def cmd_solve(args: argparse.Namespace) -> None:
@@ -631,6 +757,8 @@ def main() -> None:
         cmd_scan_slot_cultivation(args)
     elif args.calibrate_slot_cultivation:
         cmd_calibrate_slot_cultivation(args)
+    elif args.optimize_placement:
+        cmd_optimize_placement(args)
     else:
         cmd_solve(args)
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from shq.config import PROJECT_ROOT
-from shq.models import Lingjian, Region, Slot, SlotPosition
+from shq.models import BackRegionConfig, Connection, Lingjian, Region, Slot, SlotPosition
 from shq.scanner.window_capture import ROI
 
 
@@ -66,28 +66,39 @@ class TopologyLoader:
     """加载灵鉴拓扑配置文件。"""
 
     DEFAULT_PATH = PROJECT_ROOT / "data" / "lingjian_topology.json"
+    DEFAULT_RULES_PATH = PROJECT_ROOT / "data" / "ymjh_rules.json"
 
-    def __init__(self, path: Optional[Path] = None):
+    def __init__(self, path: Optional[Path] = None, rules_path: Optional[Path] = None):
         self.path = path or self.DEFAULT_PATH
+        self.rules_path = rules_path or self.DEFAULT_RULES_PATH
+        self._rules: Optional[dict] = None
+
+    def _load_rules(self) -> dict:
+        if self._rules is None:
+            self._rules = json.loads(self.rules_path.read_text(encoding="utf-8"))
+        return self._rules
 
     def load(self) -> Topology:
         """加载拓扑文件，返回模型对象与校准数据。"""
         data = json.loads(self.path.read_text(encoding="utf-8"))
+        rules = self._load_rules()
         region_calibrations: Dict[str, RegionCalibration] = {}
         regions: List[Region] = []
 
         for item in data.get("regions", []):
             region_id = str(item["id"])
+            slots = [self._parse_slot(s, region_id) for s in item.get("slots", [])]
             region = Region(
                 id=region_id,
                 name=str(item.get("name", "")),
-                slots=[self._parse_slot(s, region_id) for s in item.get("slots", [])],
+                slots=slots,
                 connections=[],
                 effects=[],
                 unlock_required_score=None,
                 back_region_id=None,
                 recommended_for=[],
             )
+            self._apply_region_rules(region, rules)
             regions.append(region)
 
             rc = RegionCalibration(
@@ -143,6 +154,7 @@ class TopologyLoader:
         return Slot(
             id=str(item["id"]),
             region_id=region_id,
+            number=int(item.get("number", 0)),
             position=SlotPosition[item.get("position", "NORMAL").upper()],
             allowed_tags=frozenset(item.get("allowed_tags", [])),
             cultivation_score=float(item.get("cultivation_score", 0)),
@@ -155,6 +167,57 @@ class TopologyLoader:
             slot_id=str(item["id"]),
             number=int(item.get("number", 0)),
         )
+
+    def _apply_region_rules(self, region: Region, rules: dict) -> None:
+        """从 ymjh_rules.json 中读取该区域的连线、同属性对、背面配置并回填到 Region。"""
+        region_rules = rules.get("regions", {}).get(region.id)
+        if not region_rules:
+            return
+
+        number_to_slot = {slot.number: slot for slot in region.slots if slot.number > 0}
+
+        # 若规则声明了背面中心孔但拓扑中未包含，则自动创建
+        back = region_rules.get("back_config")
+        if back:
+            center_number = int(back.get("center_slot_number", 0))
+            if center_number > 0 and center_number not in number_to_slot:
+                slot_id = f"{region.id}_slot_{center_number}"
+                center_slot = Slot(
+                    id=slot_id,
+                    region_id=region.id,
+                    number=center_number,
+                    position=SlotPosition.CENTER,
+                    is_back_center=True,
+                )
+                region.slots.append(center_slot)
+                number_to_slot[center_number] = center_slot
+
+        # 有向连线
+        for from_num, to_num in region_rules.get("connections", []):
+            from_slot = number_to_slot.get(from_num)
+            to_slot = number_to_slot.get(to_num)
+            if from_slot and to_slot:
+                region.connections.append(
+                    Connection(from_slot=from_slot.id, to_slot=to_slot.id)
+                )
+
+        # 同属性加成对
+        region.same_element_pairs = [
+            tuple(pair) for pair in region_rules.get("same_element_pairs", [])
+        ]
+
+        # 背面中心孔位配置
+        if back:
+            center_number = int(back.get("center_slot_number", 0))
+            center_slot = number_to_slot.get(center_number)
+            if center_slot:
+                center_slot.is_back_center = True
+                region.back_config = BackRegionConfig(
+                    xuanshu_name=str(back["xuanshu_name"]),
+                    center_slot_id=center_slot.id,
+                    front_zero_score=bool(back.get("front_zero_score", True)),
+                    back_adds_to_front=bool(back.get("back_adds_to_front", True)),
+                )
 
     @staticmethod
     def _parse_point(value: Optional[list]) -> Optional[Tuple[int, int]]:

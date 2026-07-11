@@ -47,3 +47,4 @@ Thumbs.db
 wuku_scan/
 lingjian_scan/
 /*.png
+node_modules/

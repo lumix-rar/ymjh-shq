@@ -74,22 +74,57 @@ def _parse_shanheqi(item: dict) -> Shanheqi:
     return Shanheqi(
         id=str(item["id"]),
         name=str(item.get("name", "")),
-        quality=Quality[item.get("quality", "SIMPLE").upper()],
-        element=Element[item.get("element", "METAL").upper()],
-        shanheqi_type=ShanheqiType[item.get("shanheqi_type", "NORMAL").upper()],
+        quality=_parse_quality(item.get("quality", "SIMPLE")),
+        element=_parse_element(item.get("element", "METAL")),
+        shanheqi_type=_parse_shanheqi_type(item.get("shanheqi_type", "NORMAL")),
         level=int(item.get("level", 1)),
         gongguan_level=int(item.get("gongguan_level", 0)),
         base_score=float(item.get("base_score", 0)),
         affixes=[_parse_affix(s) for s in affix_data],
+        derived_affixes=list(item.get("derived_affixes", [])),
         stats=dict(item.get("stats", {})),
         tags=frozenset(item.get("tags", [])),
     )
 
 
+def _parse_quality(value: str) -> Quality:
+    """支持英文枚举名或中文品质名。"""
+    try:
+        return Quality[value.upper()]
+    except KeyError:
+        for member in Quality:
+            if member.value == value:
+                return member
+        raise ValueError(f"无法解析品质：{value}")
+
+
+def _parse_element(value: str) -> Element:
+    """支持英文枚举名或中文五行名。"""
+    try:
+        return Element[value.upper()]
+    except KeyError:
+        for member in Element:
+            if member.value == value:
+                return member
+        raise ValueError(f"无法解析五行：{value}")
+
+
+def _parse_shanheqi_type(value: str) -> ShanheqiType:
+    """支持英文枚举名或中文类型名。"""
+    try:
+        return ShanheqiType[value.upper()]
+    except KeyError:
+        for member in ShanheqiType:
+            if member.value == value:
+                return member
+        raise ValueError(f"无法解析山河器类型：{value}")
+
+
 def _parse_affix(item: dict) -> Affix:
+    element_value = item.get("element")
     return Affix(
         name=str(item.get("name", "")),
-        element=Element[item.get("element", "METAL").upper()] if item.get("element") else None,
+        element=_parse_element(element_value) if element_value else None,
         level=int(item.get("level", 1)),
         score=float(item.get("score", 0)),
         derived=bool(item.get("derived", False)),
