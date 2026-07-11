@@ -10,7 +10,7 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from shq.models import Lingjian, Region
 from shq.scanner.lingjian_navigator import LingjianNavigator
@@ -22,6 +22,8 @@ from shq.scanner.slot_cultivation_scanner import (
 )
 from shq.scanner.topology_loader import RegionCalibration, Topology, TopologyLoader
 from shq.scanner.window_capture import ROI
+
+ProgressCallback = Optional[Callable[[str], None]]
 
 
 @dataclass
@@ -42,11 +44,13 @@ class SlotCultivationReader:
         ocr_backend: Optional[OCRBackend] = None,
         confidence_threshold: float = 0.5,
         output_dir: Optional[Path] = None,
+        progress_callback: ProgressCallback = None,
     ):
         self.backend = ocr_backend or RapidOCRBackend()
         self.topology = topology or TopologyLoader().load()
         self.output_dir = output_dir or Path.cwd() / "lingjian_scan"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.progress_callback = progress_callback
 
         self.navigator = LingjianNavigator(
             topology=self.topology,
@@ -57,6 +61,10 @@ class SlotCultivationReader:
             confidence_threshold=confidence_threshold,
             output_dir=self.output_dir,
         )
+
+    def _notify(self, msg: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(msg)
 
     # ------------------------------------------------------------------
     # 生产读取
@@ -76,17 +84,20 @@ class SlotCultivationReader:
         Returns:
             SlotCultivationReaderResult。
         """
+        self._notify("[灵鉴] 导航到灵鉴界面")
         if not self.navigator.navigate_to_lingjian():
             raise RuntimeError("导航到灵鉴界面失败")
 
         scan_result = SlotCultivationScanResult()
 
         for region in self.topology.lingjian.regions:
+            self._notify(f"[灵鉴] 读取区域：{region.name}")
             calibration = self.topology.get_region_calibration(region.id)
             rr = self._read_region(region, calibration, dry_run=dry_run)
             scan_result.region_results.append(rr)
             if rr.locked:
                 scan_result.locked_region_ids.append(region.id)
+                self._notify(f"[灵鉴] 区域 {region.name} 未解锁")
 
         # 保存截图记录
         timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -96,6 +107,7 @@ class SlotCultivationReader:
 
         target = output_path or self.output_dir / "slot_cultivation.json"
         self.scanner.save_result(scan_result, target)
+        self._notify(f"[灵鉴] 孔位培养结果已保存：{target}")
 
         return SlotCultivationReaderResult(
             lingjian=Lingjian(
@@ -187,6 +199,10 @@ class SlotCultivationReader:
             region,
             calib,
             panel_open=True,
+        )
+        self._notify(
+            f"[灵鉴] {region.name} 读取完成，"
+            f"{len(rr.slots)} 个孔位，低置信 {len(rr.low_confidence)} 条"
         )
 
         # 4. 关闭面板

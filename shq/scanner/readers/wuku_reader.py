@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from shq.scanner.name_resolver import ShanheqiNameResolver
 from shq.scanner.ocr_scanner import OCRBackend, RapidOCRBackend
@@ -16,6 +16,8 @@ from shq.scanner.search_collector import SearchCollector
 from shq.scanner.wuku_navigator import WukuNavigator
 from shq.scanner.wuku_scanner import ScanResult, WukuScanner
 from shq.scanner.window_capture import capture_game_window
+
+ProgressCallback = Optional[Callable[[str], None]]
 
 
 class WukuReader:
@@ -28,6 +30,7 @@ class WukuReader:
         output_dir: Optional[Path] = None,
         parse_workers: int = 4,
         reconcile_threshold: float = 0.55,
+        progress_callback: ProgressCallback = None,
     ):
         self.backend = ocr_backend or RapidOCRBackend()
         self.navigator = WukuNavigator(ocr_backend=self.backend)
@@ -38,6 +41,11 @@ class WukuReader:
             parse_workers=parse_workers,
         )
         self.reconcile_threshold = reconcile_threshold
+        self.progress_callback = progress_callback
+
+    def _notify(self, msg: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(msg)
 
     def _navigate_to_wuku(self) -> bool:
         """导航到武库界面。"""
@@ -53,11 +61,13 @@ class WukuReader:
         Returns:
             该品质扫描结果。
         """
+        self._notify(f"[武库] 开始扫描 {quality} 品质")
         if not self._navigate_to_wuku():
             raise RuntimeError("导航到武库界面失败")
         result = self.scanner.scan_quality(quality, reconcile=False)
 
         if reconcile:
+            self._notify(f"[武库] {quality} 扫描完成，正在漏扫兜底")
             resolver = ShanheqiNameResolver()
             reconciler = ScanReconciler(
                 resolver=resolver, score_threshold=self.reconcile_threshold
@@ -65,6 +75,7 @@ class WukuReader:
             result.shanheqis, result.reconciliation_report = reconciler.reconcile(
                 quality, result.shanheqis, result.low_confidence
             )
+        self._notify(f"[武库] {quality} 处理完成，共 {len(result.shanheqis)} 个")
         return result
 
     def read(self, reconcile: bool = True) -> ScanResult:
@@ -83,19 +94,24 @@ class WukuReader:
             完整扫描结果。
         """
         # 1. 读取收集度
+        self._notify("[武库] 导航到搜寻界面读取收集度")
         if not self.navigator.navigate_to("搜寻"):
             raise RuntimeError("导航到搜寻界面失败")
         img = capture_game_window(fixed_size=True)
         if img is None:
             raise RuntimeError("无法截取游戏窗口")
         owned_total, total = SearchCollector(self.backend).read(img)
+        self._notify(f"[武库] 收集度：{owned_total}/{total}")
 
         # 2. 扫描武库
+        self._notify("[武库] 导航到武库界面")
         if not self._navigate_to_wuku():
             raise RuntimeError("导航到武库界面失败")
+        self._notify("[武库] 开始扫描全部品质")
         result = self.scanner.run(reconcile=reconcile)
 
         # 3. 将收集度附加到结果中
         result.screenshots["_owned_total"] = owned_total
         result.screenshots["_total"] = total
+        self._notify(f"[武库] 扫描完成，共 {len(result.shanheqis)} 个山河器")
         return result

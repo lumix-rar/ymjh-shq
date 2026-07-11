@@ -7,20 +7,31 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from shq.models import BuildPreference, Evaluation, Lingjian, Placement, Shanheqi, Slot, Solution
 from shq.rules import RuleSet
 from shq.solver.interface import Solver
 
+ProgressCallback = Optional[Callable[[int, int], None]]
+StopEvent = Optional["threading.Event"]
+
 
 class LocalSearchSolver(Solver):
     """基于局部搜索的启发式求解器。"""
 
-    def __init__(self, max_iterations: int = 2000, seed: Optional[int] = None):
+    def __init__(
+        self,
+        max_iterations: int = 2000,
+        seed: Optional[int] = None,
+        progress_callback: ProgressCallback = None,
+        stop_event: StopEvent = None,
+    ):
         self.max_iterations = max_iterations
         self.seed = seed
         self._rng = random.Random(seed)
+        self.progress_callback = progress_callback
+        self.stop_event = stop_event
 
     @property
     def name(self) -> str:
@@ -115,6 +126,12 @@ class LocalSearchSolver(Solver):
         while iteration < self.max_iterations and no_improve_count < 200:
             iteration += 1
             improved = False
+
+            if self.stop_event is not None and self.stop_event.is_set():
+                break
+
+            if self.progress_callback is not None and iteration % 50 == 0:
+                self.progress_callback(iteration, self.max_iterations)
 
             operation = self._rng.choice(["swap", "move", "insert_remove"])
 
