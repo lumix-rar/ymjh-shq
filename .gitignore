@@ -45,4 +45,5 @@ Thumbs.db
 
 # Project specific: generated scan outputs and debug screenshots
 wuku_scan/
+lingjian_scan/
 /*.png
