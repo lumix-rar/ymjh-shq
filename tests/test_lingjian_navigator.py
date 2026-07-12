@@ -92,13 +92,13 @@ class TestLingjianNavigator(unittest.TestCase):
         )
         nav = self._make_navigator(backend)
         nav._capture = MagicMock(return_value=np.zeros((750, 1334, 3), dtype=np.uint8))
-        nav._click_client = MagicMock()
+        nav._click_and_wait_for_stable = MagicMock()
 
         ok = nav.select_region("关河道远")
 
         self.assertTrue(ok)
         # 第一次点击下拉框，第二次点击目标
-        self.assertEqual(nav._click_client.call_count, 2)
+        self.assertEqual(nav._click_and_wait_for_stable.call_count, 2)
 
     def test_select_region_already_current(self):
         backend = MockOCRBackend(
@@ -141,12 +141,12 @@ class TestLingjianNavigator(unittest.TestCase):
         )
         nav = self._make_navigator(backend)
         nav._capture = MagicMock(return_value=np.zeros((750, 1334, 3), dtype=np.uint8))
-        nav._click_client = MagicMock()
+        nav._click_and_wait_for_stable = MagicMock()
 
         ok = nav.click_cultivation_button()
 
         self.assertTrue(ok)
-        nav._click_client.assert_called_once()
+        nav._click_and_wait_for_stable.assert_called_once()
 
 
 if __name__ == "__main__":

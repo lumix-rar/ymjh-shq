@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from shq.models import Lingjian, Region
+from shq.scanner.exceptions import ScanInterruptedError
 from shq.scanner.lingjian_navigator import LingjianNavigator
 from shq.scanner.ocr_scanner import OCRBackend, RapidOCRBackend
 from shq.scanner.slot_cultivation_scanner import (
@@ -45,16 +47,21 @@ class SlotCultivationReader:
         confidence_threshold: float = 0.5,
         output_dir: Optional[Path] = None,
         progress_callback: ProgressCallback = None,
+        auto_resize: bool = True,
+        stop_event: Optional[threading.Event] = None,
     ):
         self.backend = ocr_backend or RapidOCRBackend()
         self.topology = topology or TopologyLoader().load()
         self.output_dir = output_dir or Path.cwd() / "lingjian_scan"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.progress_callback = progress_callback
+        self.stop_event = stop_event
 
         self.navigator = LingjianNavigator(
             topology=self.topology,
             ocr_backend=self.backend,
+            auto_resize=auto_resize,
+            stop_event=stop_event,
         )
         self.scanner = SlotCultivationScanner(
             ocr_backend=self.backend,
@@ -65,6 +72,11 @@ class SlotCultivationReader:
     def _notify(self, msg: str) -> None:
         if self.progress_callback is not None:
             self.progress_callback(msg)
+
+    def _check_stopped(self) -> None:
+        """若用户请求停止，则抛出 ScanInterruptedError。"""
+        if self.stop_event is not None and self.stop_event.is_set():
+            raise ScanInterruptedError()
 
     # ------------------------------------------------------------------
     # 生产读取
@@ -91,6 +103,7 @@ class SlotCultivationReader:
         scan_result = SlotCultivationScanResult()
 
         for region in self.topology.lingjian.regions:
+            self._check_stopped()
             self._notify(f"[灵鉴] 读取区域：{region.name}")
             calibration = self.topology.get_region_calibration(region.id)
             rr = self._read_region(region, calibration, dry_run=dry_run)
@@ -127,6 +140,7 @@ class SlotCultivationReader:
         dry_run: bool = False,
     ) -> RegionCultivationResult:
         """读取单个区域。"""
+        self._check_stopped()
         print(f"\n[读取] 区域：{region.name}")
 
         # 1. 切换到目标区域

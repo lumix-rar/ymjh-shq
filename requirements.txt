@@ -4,6 +4,9 @@ opencv-python>=4.8   # 游戏窗口截图与图像预处理
 pillow>=10.0         # 屏幕截图 fallback（ImageGrab 可捕获 DirectX 窗口）
 rapidocr-onnxruntime>=1.2  # OCR 引擎（轻量，支持 Python 3.14）
 
+# 其他可选截图后端（DXGI Desktop Duplication，对全屏游戏更友好）
+#   mss>=9.0
+
 # 其他可选 OCR 引擎
 #   easyocr>=1.7       # 支持中文，体积大，首次使用需下载模型
 #   paddleocr>=2.7     # 中文识别强，需要 paddlepaddle，体积较大

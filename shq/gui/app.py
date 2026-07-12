@@ -68,8 +68,18 @@ class ShqGuiApplication:
         menubar.add_cascade(label="文件(F)", menu=file_menu)
 
         scan_menu = tk.Menu(menubar, tearoff=0)
-        scan_menu.add_command(label="一键扫描武库", command=lambda: self.controller.on_scan_wuku(self.ocr_var.get()))
-        scan_menu.add_command(label="一键扫描灵鉴", command=lambda: self.controller.on_scan_slot_cultivation(self.ocr_var.get()))
+        scan_menu.add_command(
+            label="一键扫描武库",
+            command=lambda: self.controller.on_scan_wuku(
+                self.ocr_var.get(), self.auto_resize_var.get()
+            ),
+        )
+        scan_menu.add_command(
+            label="一键扫描灵鉴",
+            command=lambda: self.controller.on_scan_slot_cultivation(
+                self.ocr_var.get(), self.auto_resize_var.get()
+            ),
+        )
         menubar.add_cascade(label="扫描(S)", menu=scan_menu)
 
         solve_menu = tk.Menu(menubar, tearoff=0)
@@ -91,12 +101,16 @@ class ShqGuiApplication:
         ttk.Button(
             toolbar,
             text="一键扫描武库",
-            command=lambda: self.controller.on_scan_wuku(self.ocr_var.get()),
+            command=lambda: self.controller.on_scan_wuku(
+                self.ocr_var.get(), self.auto_resize_var.get()
+            ),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
             toolbar,
             text="一键扫描灵鉴",
-            command=lambda: self.controller.on_scan_slot_cultivation(self.ocr_var.get()),
+            command=lambda: self.controller.on_scan_slot_cultivation(
+                self.ocr_var.get(), self.auto_resize_var.get()
+            ),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
             toolbar,
@@ -130,6 +144,13 @@ class ShqGuiApplication:
             width=10,
         )
         ocr_combo.pack(side=tk.LEFT)
+
+        self.auto_resize_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            toolbar,
+            text="自动调整游戏窗口大小",
+            variable=self.auto_resize_var,
+        ).pack(side=tk.LEFT, padx=(15, 0))
 
         if not available_ocrs:
             ttk.Label(
@@ -273,6 +294,15 @@ def main() -> None:
     from tkinter import messagebox
     from shq.gui.utils import is_admin
 
+    def _close_splash() -> None:
+        """关闭 PyInstaller 启动画面（非打包环境忽略）。"""
+        try:
+            import pyi_splash  # type: ignore
+
+            pyi_splash.close()
+        except Exception:
+            pass
+
     root = tk.Tk()
     root.withdraw()
 
@@ -297,6 +327,7 @@ def main() -> None:
     app = ShqGuiApplication(root)
     root.after(200, app._show_usage)
     root.deiconify()
+    _close_splash()
     root.mainloop()
 
 

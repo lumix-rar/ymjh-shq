@@ -256,7 +256,9 @@ class AppController:
     # ------------------------------------------------------------------
     # 扫描
     # ------------------------------------------------------------------
-    def on_scan_wuku(self, ocr_backend_name: str = "rapidocr") -> None:
+    def on_scan_wuku(
+        self, ocr_backend_name: str = "rapidocr", auto_resize: bool = True
+    ) -> None:
         if self._current_worker and self._current_worker.is_alive():
             messagebox.showwarning("提示", "已有任务在运行中", parent=self.root)
             return
@@ -270,13 +272,14 @@ class AppController:
             ocr_backend_name=ocr_backend_name,
             output_dir=output_dir,
             output_path=output_path,
+            auto_resize=auto_resize,
         )
         self.status.start_progress("indeterminate")
         self.status.set_text("正在扫描武库...")
         self._current_worker.start()
 
     def on_scan_slot_cultivation(
-        self, ocr_backend_name: str = "rapidocr"
+        self, ocr_backend_name: str = "rapidocr", auto_resize: bool = True
     ) -> None:
         if self._current_worker and self._current_worker.is_alive():
             messagebox.showwarning("提示", "已有任务在运行中", parent=self.root)
@@ -291,6 +294,7 @@ class AppController:
             ocr_backend_name=ocr_backend_name,
             output_dir=output_dir,
             output_path=output_path,
+            auto_resize=auto_resize,
         )
         self.status.start_progress("indeterminate")
         self.status.set_text("正在扫描灵鉴孔位...")

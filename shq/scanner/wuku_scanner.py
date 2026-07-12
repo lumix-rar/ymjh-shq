@@ -16,6 +16,7 @@ from __future__ import annotations
 import ctypes
 import difflib
 import json
+import os
 import re
 import threading
 import time
@@ -30,6 +31,7 @@ from PIL import ImageGrab
 
 from shq.models import Affix, Element, Quality, Shanheqi, ShanheqiType
 from shq.scanner.constants import QUALITY_NAME_TO_ENUM, SUB_TAG_TO_TYPE, TYPE_TO_SUB_TAG
+from shq.scanner.exceptions import ScanInterruptedError
 from shq.scanner.input_simulator import InputSimulator
 from shq.scanner.name_resolver import ShanheqiNameResolver
 from shq.scanner.ocr_scanner import OCRBackend, RapidOCRBackend
@@ -39,6 +41,8 @@ from shq.scanner.window_capture import (
     DEFAULT_CLIENT_WIDTH,
     ROI,
     WindowCapture,
+    frames_changed,
+    wait_for_stable,
 )
 
 
@@ -47,6 +51,14 @@ DERIVED_AFFIX_NAMES = ("起势", "承势", "金实", "火实", "木实", "水实
 
 DETAIL_PANEL_ROI = ROI("detail", 720, 80, 530, 640)
 ELEMENT_ICON_ROI = ROI("element", 1090, 90, 70, 70)
+# 当 detail_img 已经是 DETAIL_PANEL_ROI 裁剪图时，元素图标在该裁剪图中的相对位置
+ELEMENT_ICON_ROI_IN_PANEL = ROI(
+    "element_in_panel",
+    ELEMENT_ICON_ROI.x - DETAIL_PANEL_ROI.x,
+    ELEMENT_ICON_ROI.y - DETAIL_PANEL_ROI.y,
+    ELEMENT_ICON_ROI.width,
+    ELEMENT_ICON_ROI.height,
+)
 
 MOUSEEVENTF_WHEEL = 0x0800
 WHEEL_DELTA = 120
@@ -125,17 +137,24 @@ class WukuScanner:
         output_dir: Optional[Path] = None,
         fixed_size: bool = True,
         parse_workers: int = 4,
+        auto_resize: bool = True,
+        stop_event: Optional[threading.Event] = None,
     ):
         self.backend = ocr_backend or RapidOCRBackend()
         self.conf_threshold = confidence_threshold
         self.output_dir = output_dir or Path.cwd() / "wuku_scan"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.fixed_size = fixed_size
-        self.parse_workers = max(1, parse_workers)
+        self.auto_resize = auto_resize
+        self.stop_event = stop_event
+        # 默认 OCR 线程数不超过 2，避免吃满 CPU 影响游戏帧率
+        cpu_count = os.cpu_count() or 4
+        self.parse_workers = max(1, min(parse_workers, cpu_count // 2, 2))
 
         self._cap: Optional[WindowCapture] = None
         self._hwnd: Optional[int] = None
         self._sim = InputSimulator(default_delay=0.5)
+        self._window_prepared = False
 
         # 名字归一化解析器（基于本地底稿校正 OCR 名字错误）
         self._name_resolver = ShanheqiNameResolver()
@@ -143,6 +162,11 @@ class WukuScanner:
 
         # 每个消费者线程拥有独立的 OCR 后端
         self._worker_local = threading.local()
+
+    def _check_stopped(self) -> None:
+        """若用户请求停止，则抛出 ScanInterruptedError。"""
+        if self.stop_event is not None and self.stop_event.is_set():
+            raise ScanInterruptedError()
 
     # ------------------------------------------------------------------
     # 窗口 / 截图 / 点击 / 滚动
@@ -177,10 +201,14 @@ class WukuScanner:
         self._cap = WindowCapture(hwnd)
         return hwnd
 
-    def _bring_to_front(self) -> None:
+    def _bring_to_front(self, wait: float = 0.5) -> None:
         hwnd = self._get_hwnd()
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
+
+        # 已经是前台窗口时避免焦点切换和等待
+        if hwnd == user32.GetForegroundWindow() and not user32.IsIconic(hwnd):
+            return
 
         if user32.IsIconic(hwnd):
             user32.ShowWindow(hwnd, 9)
@@ -202,25 +230,34 @@ class WukuScanner:
             if attached:
                 user32.AttachThreadInput(fg_tid, target_tid, False)
 
-        time.sleep(0.5)
+        time.sleep(wait)
 
     def _ensure_fixed_size(self) -> None:
         if not self.fixed_size:
             return
         cap = self._cap or WindowCapture(self._get_hwnd())
-        ok = cap.ensure_client_size(DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT)
+        size = cap.get_client_size()
+        if size == (DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT):
+            return
+        if not self.auto_resize:
+            _safe_print(
+                f"[警告] 游戏窗口客户区为 {size}，不是基准分辨率 "
+                f"{DEFAULT_CLIENT_WIDTH}x{DEFAULT_CLIENT_HEIGHT}，"
+                f"但已禁用自动调整，继续扫描可能导致坐标/OCR 偏差"
+            )
+            return
+        ok = cap.resize_client(DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT)
         if not ok:
-            ok = cap.resize_client(DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT)
-            if not ok:
-                raise RuntimeError(
-                    f"无法将游戏窗口调整为 {DEFAULT_CLIENT_WIDTH}x{DEFAULT_CLIENT_HEIGHT}"
-                )
+            raise RuntimeError(
+                f"无法将游戏窗口调整为 {DEFAULT_CLIENT_WIDTH}x{DEFAULT_CLIENT_HEIGHT}"
+            )
         size = cap.get_client_size()
         if size != (DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT):
             raise RuntimeError(f"窗口大小仍为 {size}，无法固定为基准分辨率")
 
     def _capture(self, debug_name: Optional[str] = None) -> np.ndarray:
-        self._bring_to_front()
+        if not self._window_prepared:
+            self._bring_to_front()
         cap = self._cap or WindowCapture(self._get_hwnd())
         rect = cap.get_rect()
         if rect is None:
@@ -234,13 +271,29 @@ class WukuScanner:
             cv2.imwrite(str(path), img_cv)
         return img_cv
 
+    def _capture_detail_panel(self, debug_name: Optional[str] = None) -> np.ndarray:
+        """仅截取右侧面板 ROI，减少 GPU 回读数据量。"""
+        if not self._window_prepared:
+            self._bring_to_front()
+        cap = self._cap or WindowCapture(self._get_hwnd())
+        img = cap.capture_roi(DETAIL_PANEL_ROI)
+        if img is None:
+            raise RuntimeError("无法截取右侧面板")
+
+        if debug_name:
+            path = self.output_dir / f"{debug_name}.png"
+            cv2.imwrite(str(path), img)
+        return img
+
     def _click_client(self, cx: int, cy: int, delay: float = 0.5) -> None:
-        self._bring_to_front()
+        if not self._window_prepared:
+            self._bring_to_front()
         self._sim.click_on_window(self._get_hwnd(), cx, cy, attach_thread=True)
         time.sleep(delay)
 
     def _scroll_grid(self, clicks: int = -3) -> None:
-        self._bring_to_front()
+        if not self._window_prepared:
+            self._bring_to_front()
         # 先点击网格区域，确保游戏内部焦点在可滚动的列表上
         self._click_client(300, 400, delay=0.3)
         user32 = ctypes.windll.user32
@@ -249,6 +302,56 @@ class WukuScanner:
             user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
             time.sleep(0.15)
         time.sleep(0.5)
+
+    def _wait_for_stable(
+        self, timeout: float = 2.0, stable_frames: int = 2, threshold: float = 0.02
+    ) -> bool:
+        """等待游戏画面稳定，替代固定 time.sleep。等待期间也会检查是否停止。"""
+        def _capture_and_check():
+            self._check_stopped()
+            return self._capture()
+
+        return wait_for_stable(
+            _capture_and_check,
+            timeout=timeout,
+            stable_frames=stable_frames,
+            threshold=threshold,
+        )
+
+    def _click_and_wait_for_stable(
+        self,
+        cx: int,
+        cy: int,
+        max_wait: float = 0.6,
+        stable_frames: int = 2,
+    ) -> None:
+        """点击后等待画面稳定，最大等待 max_wait 秒。"""
+        if not self._window_prepared:
+            self._bring_to_front()
+        self._sim.click_on_window(
+            self._get_hwnd(), cx, cy, attach_thread=True, delay=0.05
+        )
+        self._wait_for_stable(timeout=max_wait, stable_frames=stable_frames)
+
+    def _scroll_and_wait_for_stable(
+        self,
+        clicks: int = -3,
+        max_wait: float = 0.5,
+        stable_frames: int = 1,
+    ) -> None:
+        """滚动网格后等待画面稳定。"""
+        if not self._window_prepared:
+            self._bring_to_front()
+        # 先点击网格区域，确保游戏内部焦点在可滚动的列表上
+        self._sim.click_on_window(
+            self._get_hwnd(), 300, 400, attach_thread=True, delay=0.05
+        )
+        user32 = ctypes.windll.user32
+        delta = -WHEEL_DELTA if clicks < 0 else WHEEL_DELTA
+        for _ in range(abs(clicks)):
+            user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+            time.sleep(0.05)
+        self._wait_for_stable(timeout=max_wait, stable_frames=stable_frames)
 
     def _detect_current_quality(self, img: np.ndarray) -> Optional[str]:
         """OCR 识别关闭状态下拉框当前显示的品质。"""
@@ -273,6 +376,7 @@ class WukuScanner:
 
         _safe_print(f"[品质] 选择：{quality}")
         for attempt in range(5):
+            self._check_stopped()
             img = self._capture(f"_quality_select_{attempt}")
             current = self._detect_current_quality(img)
 
@@ -284,23 +388,24 @@ class WukuScanner:
             current = current or "全部"
 
             # 打开下拉框
-            self._click_client(
-                QUALITY_DROPDOWN_BUTTON[0], QUALITY_DROPDOWN_BUTTON[1], delay=0.5
+            self._click_and_wait_for_stable(
+                QUALITY_DROPDOWN_BUTTON[0],
+                QUALITY_DROPDOWN_BUTTON[1],
+                max_wait=0.5,
             )
-            time.sleep(0.4)
 
             # 计算目标品质在展开列表中的顺序位置
             shown = [q for q in _QUALITY_BASE_ORDER if q != current]
             if quality not in shown:
                 _safe_print(f"[品质] 计算出错：{quality} 不在 {current} 展开列表中，重试")
-                time.sleep(0.3)
                 continue
             shown_index = shown.index(quality)
             target_y = QUALITY_FIRST_OPTION_Y + shown_index * QUALITY_OPTION_SPACING
 
             _safe_print(f"[品质] 当前={current}，目标={quality} 在展开列表第 {shown_index} 位")
-            self._click_client(QUALITY_OPTION_X, target_y, delay=0.5)
-            time.sleep(0.6)
+            self._click_and_wait_for_stable(
+                QUALITY_OPTION_X, target_y, max_wait=0.6
+            )
 
             # 验证
             img = self._capture(f"_quality_verify_{attempt}")
@@ -318,8 +423,8 @@ class WukuScanner:
         max_top_attempts = 20
         prev_top_hash: Optional[str] = None
         while top_attempts < max_top_attempts:
-            self._scroll_grid(5)
-            time.sleep(0.3)
+            self._check_stopped()
+            self._scroll_and_wait_for_stable(5, max_wait=0.5, stable_frames=1)
             top_img = self._capture("_top_check")
             top_hash = self._grid_hash(top_img)
             if prev_top_hash is not None:
@@ -329,7 +434,6 @@ class WukuScanner:
                     break
             prev_top_hash = top_hash
             top_attempts += 1
-        time.sleep(0.5)
 
     # ------------------------------------------------------------------
     # 网格扫描
@@ -462,9 +566,25 @@ class WukuScanner:
         backend: OCRBackend,
         conf_threshold: float,
     ) -> Tuple[Shanheqi, float, List[str]]:
-        """解析单张详情截图，不依赖实例状态。"""
+        """解析单张详情截图，不依赖实例状态。
+
+        支持两种输入：
+        - 完整窗口截图：会按 DETAIL_PANEL_ROI 裁剪出右侧面板。
+        - 已裁剪的右侧面板 ROI：直接用于 OCR。
+        """
         issues: List[str] = []
-        texts = backend.recognize(DETAIL_PANEL_ROI.crop(detail_img))
+
+        # 判断 detail_img 是否已经是面板 ROI
+        h, w = detail_img.shape[:2]
+        is_panel_roi = (w == DETAIL_PANEL_ROI.width and h == DETAIL_PANEL_ROI.height)
+        if is_panel_roi:
+            panel = detail_img
+            icon_roi = ELEMENT_ICON_ROI_IN_PANEL
+        else:
+            panel = DETAIL_PANEL_ROI.crop(detail_img)
+            icon_roi = ELEMENT_ICON_ROI
+
+        texts = backend.recognize(panel)
         lines = [t for t, _ in texts]
         confs = [conf for _, conf in texts]
         min_conf = min(confs) if confs else 0.0
@@ -550,7 +670,7 @@ class WukuScanner:
 
         # 五行：优先以第一个素蕴的五行作为权威值（用户实测规则）。
         # 图标颜色识别仅作兜底与冲突校验。
-        visual_element = WukuScanner._classify_element(detail_img)
+        visual_element = WukuScanner._classify_element_icon(icon_roi.crop(detail_img))
         element = None
         if affixes and affixes[0].element:
             element = affixes[0].element
@@ -619,11 +739,11 @@ class WukuScanner:
     # 五行 / 特殊类型 识别
     # ------------------------------------------------------------------
     @staticmethod
-    def _classify_element(detail_img: np.ndarray) -> Optional[Element]:
-        crop = ELEMENT_ICON_ROI.crop(detail_img)
-        if crop.size == 0:
+    def _classify_element_icon(icon_img: np.ndarray) -> Optional[Element]:
+        """根据五行图标图像判断元素，输入应为 ELEMENT_ICON_ROI 裁剪结果。"""
+        if icon_img.size == 0:
             return None
-        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(icon_img, cv2.COLOR_BGR2HSV)
         mask = (hsv[:, :, 2] > 80) & (hsv[:, :, 1] > 40)
         if not np.any(mask):
             return None
@@ -640,6 +760,11 @@ class WukuScanner:
         if 75 < mean_h <= 130:
             return Element.WATER
         return None
+
+    @staticmethod
+    def _classify_element(detail_img: np.ndarray) -> Optional[Element]:
+        """从完整详情截图中裁剪出五行图标并判断元素（兼容旧调用）。"""
+        return WukuScanner._classify_element_icon(ELEMENT_ICON_ROI.crop(detail_img))
 
     @staticmethod
     def _detect_special_tag(img: np.ndarray, cx: int, cy: int) -> Optional[ShanheqiType]:
@@ -723,6 +848,13 @@ class WukuScanner:
 
     def _consume_detail(self, pending: PendingDetail) -> Optional[Tuple[Shanheqi, float, List[str]]]:
         try:
+            # 用户点击停止时，跳过未开始的解析任务
+            if self.stop_event is not None and self.stop_event.is_set():
+                return None
+
+            # 轻微让出时间片，避免后台 OCR 把 CPU 跑满影响游戏帧率
+            time.sleep(0.005)
+
             detail_img = cv2.imread(str(pending.detail_path))
             if detail_img is None:
                 return None
@@ -865,6 +997,7 @@ class WukuScanner:
         futures: Dict["concurrent.futures.Future", PendingDetail] = {}
 
         while step < max_steps:
+            self._check_stopped()
             quality_prefix = self._current_quality or "unknown"
 
             _safe_print(f"\n[扫描] 第 {step} 屏")
@@ -882,6 +1015,7 @@ class WukuScanner:
 
             # 逐个点击所有 cell（不管是否看起来已获取）
             for cell in cells:
+                self._check_stopped()
                 if not cell.name:
                     continue
 
@@ -902,8 +1036,10 @@ class WukuScanner:
                 _safe_print(
                     f"   -> 点击 {cell.name} @({cell.center_x},{cell.center_y})"
                 )
-                self._click_client(cell.center_x, cell.center_y, delay=0.6)
-                detail_img = self._capture(
+                self._click_and_wait_for_stable(
+                    cell.center_x, cell.center_y, max_wait=0.6
+                )
+                detail_img = self._capture_detail_panel(
                     f"detail_{quality_prefix}_{step:02d}_{cell.row_in_screen}_{cell.col}"
                 )
                 detail_path = (
@@ -955,7 +1091,7 @@ class WukuScanner:
                     no_progress = 0
             prev_grid_hash = grid_hash
 
-            self._scroll_grid(scroll_clicks)
+            self._scroll_and_wait_for_stable(scroll_clicks)
             step += 1
 
         _safe_print(
@@ -980,10 +1116,12 @@ class WukuScanner:
         return owned_items, low_conf_records, parsed_count, pending_count, all_cells_log
 
     def _prepare_window(self) -> None:
-        """公共准备：找窗口、调尺寸、置顶。"""
+        """公共准备：找窗口、调尺寸、置顶。扫描期间只执行一次。"""
         self._get_hwnd()
-        self._ensure_fixed_size()
-        self._bring_to_front()
+        if not self._window_prepared:
+            self._ensure_fixed_size()
+            self._bring_to_front()
+            self._window_prepared = True
 
     def _save_scan_result(
         self,

@@ -14,6 +14,7 @@ from shq.scanner import (
     SlotCultivationReader,
     WukuReader,
 )
+from shq.scanner.exceptions import ScanInterruptedError
 from shq.scanner.manual_importer import ManualImporter
 from shq.scanner.ocr_scanner import EasyOCRBackend, PlaceholderOCRBackend
 from shq.solver import LocalSearchSolver
@@ -64,12 +65,14 @@ class ScanWorker(BaseWorker):
         ocr_backend_name: str = "rapidocr",
         output_dir: Optional[Path] = None,
         output_path: Optional[Path] = None,
+        auto_resize: bool = True,
     ):
         super().__init__(queue)
         self.scan_type = scan_type
         self.ocr_backend_name = ocr_backend_name
         self.output_dir = output_dir
         self.output_path = output_path
+        self.auto_resize = auto_resize
 
     def run(self) -> None:
         try:
@@ -89,6 +92,8 @@ class ScanWorker(BaseWorker):
                 self._scan_slot(backend)
             else:
                 raise ValueError(f"未知扫描类型：{self.scan_type}")
+        except ScanInterruptedError:
+            self.log("扫描已取消")
         except Exception as exc:
             self.error(exc)
 
@@ -98,6 +103,8 @@ class ScanWorker(BaseWorker):
             ocr_backend=backend,
             output_dir=self.output_dir,
             progress_callback=lambda msg: self.log(msg),
+            auto_resize=self.auto_resize,
+            stop_event=self.stop_event,
         )
         result = reader.read(reconcile=True)
         if self.is_stopped():
@@ -120,6 +127,8 @@ class ScanWorker(BaseWorker):
             ocr_backend=backend,
             output_dir=self.output_dir,
             progress_callback=lambda msg: self.log(msg),
+            auto_resize=self.auto_resize,
+            stop_event=self.stop_event,
         )
         result = reader.read(output_path=self.output_path)
         if self.is_stopped():

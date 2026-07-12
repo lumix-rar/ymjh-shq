@@ -34,5 +34,6 @@ def test_manual_fallback_prompts_user(monkeypatch):
     """手动降级模式会读取用户输入并再次检测武库高亮。"""
     ctrl = NavigationController(ocr_backend=PlaceholderOCRBackend())
     monkeypatch.setattr("builtins.input", lambda: None)
+    ctrl.screenshot = lambda: np.zeros((750, 1334, 3), dtype=np.uint8)
     # 默认黑色截图不会触发高亮，因此会失败；主要验证流程不抛异常
     assert ctrl._manual_fallback_to_wuku() is False

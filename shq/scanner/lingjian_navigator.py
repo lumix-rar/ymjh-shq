@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import ctypes
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -59,8 +60,15 @@ class LingjianNavigator(WukuNavigator):
         topology: Optional[Topology] = None,
         ocr_backend: Optional[OCRBackend] = None,
         attach_thread: bool = True,
+        auto_resize: bool = True,
+        stop_event: Optional[threading.Event] = None,
     ):
-        super().__init__(ocr_backend=ocr_backend, attach_thread=attach_thread)
+        super().__init__(
+            ocr_backend=ocr_backend,
+            attach_thread=attach_thread,
+            auto_resize=auto_resize,
+            stop_event=stop_event,
+        )
         self.topology = topology
 
     # ------------------------------------------------------------------
@@ -134,7 +142,7 @@ class LingjianNavigator(WukuNavigator):
             cx, cy = self.detect_region_buttons(img, expanded=False)[current]
 
         print(f"[灵鉴导航] 点击区域下拉框（当前：{current}）：({cx}, {cy})")
-        self._click_client(cx, cy, delay=0.8)
+        self._click_and_wait_for_stable(cx, cy, max_wait=0.8)
         return True
 
     def select_region(
@@ -157,6 +165,7 @@ class LingjianNavigator(WukuNavigator):
         order = self._get_region_order()
 
         for attempt in range(max_retries):
+            self._check_stopped()
             img = self._capture()
             current = self.detect_current_region(img)
 
@@ -170,7 +179,7 @@ class LingjianNavigator(WukuNavigator):
             if calibrated and attempt == 0:
                 cx, cy = calibrated
                 print(f"[灵鉴导航] 使用校准坐标点击区域下拉框：({cx}, {cy})")
-                self._click_client(cx, cy, delay=0.8)
+                self._click_and_wait_for_stable(cx, cy, max_wait=0.8)
             else:
                 self.open_region_dropdown()
 
@@ -182,7 +191,7 @@ class LingjianNavigator(WukuNavigator):
 
             cx, cy = found
             print(f"[灵鉴导航] 点击区域 {region_name}：({cx}, {cy})")
-            self._click_client(cx, cy, delay=1.0)
+            self._click_and_wait_for_stable(cx, cy, max_wait=1.0)
 
             img = self._capture()
             if self._verify_region_selected(img, region_name):
@@ -211,6 +220,7 @@ class LingjianNavigator(WukuNavigator):
         target_idx = order.index(region_name) if region_name in order else -1
 
         for scroll in range(max_scrolls + 1):
+            self._check_stopped()
             img = self._capture()
             buttons = self.detect_region_buttons(img, expanded=True)
 
@@ -276,8 +286,8 @@ class LingjianNavigator(WukuNavigator):
         user32 = ctypes.windll.user32
         for _ in range(clicks):
             user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
-            time.sleep(0.15)
-        time.sleep(0.5)
+            time.sleep(0.05)
+        self._wait_for_stable(timeout=0.5, stable_frames=1)
 
     def is_region_locked(self, img: np.ndarray) -> bool:
         """检测当前区域是否未解锁。
@@ -312,6 +322,7 @@ class LingjianNavigator(WukuNavigator):
         calibrated = calibration.cultivation_button if calibration else None
 
         for attempt in range(max_retries):
+            self._check_stopped()
             img = self._capture()
             button = self._find_cultivation_button(img, calibrated)
             if button is None:
@@ -325,7 +336,7 @@ class LingjianNavigator(WukuNavigator):
 
             cx, cy = button
             print(f"[灵鉴导航] 点击「孔位培养」：({cx}, {cy})")
-            self._click_client(cx, cy, delay=1.0)
+            self._click_and_wait_for_stable(cx, cy, max_wait=1.0)
             print("[灵鉴导航] 已切换到「孔位培养」标签页")
             return True
 
@@ -362,7 +373,7 @@ class LingjianNavigator(WukuNavigator):
             cx, cy = 160, 480
         else:
             cx, cy = int(size[0] * 0.12), int(size[1] * 0.65)
-        self._click_client(cx, cy, delay=0.6)
+        self._click_and_wait_for_stable(cx, cy, max_wait=0.6)
 
     # ------------------------------------------------------------------
     # 内部辅助

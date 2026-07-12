@@ -17,7 +17,7 @@ import ctypes.wintypes
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -387,7 +387,14 @@ class WindowCapture:
             if rect is None or rect.width <= 0 or rect.height <= 0:
                 return None
 
-        # 对游戏类 DirectX 窗口，GDI 方式通常黑屏，优先使用 ImageGrab 截取屏幕区域
+        # 对游戏类 DirectX 窗口，GDI 方式通常黑屏：
+        # 1. 优先尝试基于 DXGI Desktop Duplication 的 mss（对全屏/无边框游戏更友好）
+        # 2. 其次使用 ImageGrab 截取屏幕区域
+        # 3. 最后 fallback 到 GDI
+        img = self._capture_with_mss(rect)
+        if img is not None and img.mean() > 1.0:
+            return img
+
         img = self._capture_with_image_grab(rect)
         if img is not None and img.mean() > 1.0:
             return img
@@ -445,6 +452,41 @@ class WindowCapture:
             return False
         return cv2.imwrite(str(path), img)
 
+    def capture_roi(self, roi: ROI) -> Optional[np.ndarray]:
+        """截取窗口客户区中的指定 ROI 区域（屏幕绝对坐标）。
+
+        相比 capture() 全屏截图，可减少 GPU 回读数据量，适合高频局部 OCR。
+        """
+        if self.hwnd is None:
+            return None
+        rect = self.get_rect()
+        if rect is None:
+            return None
+
+        left = rect.left + roi.x
+        top = rect.top + roi.y
+        right = left + roi.width
+        bottom = top + roi.height
+
+        # 限制在客户区内
+        right = min(right, rect.right)
+        bottom = min(bottom, rect.bottom)
+        if right <= left or bottom <= top:
+            return None
+
+        try:
+            from PIL import ImageGrab
+        except ImportError as e:
+            raise RuntimeError(
+                "Pillow 未安装，无法使用屏幕截图 fallback。请运行：pip install pillow"
+            ) from e
+
+        try:
+            screenshot = ImageGrab.grab(bbox=(left, top, right, bottom))
+            return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            raise RuntimeError(f"ImageGrab 截图失败：{e}") from e
+
     @staticmethod
     def _is_black(mfc_dc, bitmap, rect: WindowRect) -> bool:
         """简单判断截图是否全黑。"""
@@ -462,6 +504,33 @@ class WindowCapture:
             return buffer == b"\x00\x00\x00"
         except Exception:
             return False
+
+    def _capture_with_mss(self, rect: WindowRect) -> Optional[np.ndarray]:
+        """使用 mss 通过 DXGI Desktop Duplication 截取屏幕区域。
+
+        mss 对全屏/无边框 DirectX 游戏的干扰比 ImageGrab 更小，
+        且能避免部分 GDI 黑屏问题。若未安装则返回 None。
+        """
+        try:
+            import mss
+            import mss.tools
+        except ImportError:
+            return None
+
+        try:
+            with mss.mss() as sct:
+                monitor = {
+                    "left": rect.left,
+                    "top": rect.top,
+                    "width": rect.width,
+                    "height": rect.height,
+                }
+                screenshot = sct.grab(monitor)
+                # mss.grab 返回 BGRA 格式
+                img = np.array(screenshot)
+                return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        except Exception:
+            return None
 
     def _capture_with_image_grab(self, rect: WindowRect) -> Optional[np.ndarray]:
         """使用 Pillow ImageGrab 截取屏幕区域（对 DirectX 游戏通常有效）。"""
@@ -520,3 +589,63 @@ def capture_game_window(
             return cap.capture(bring_to_front=bring_to_front)
 
     return None
+
+
+def frames_changed(
+    a: np.ndarray, b: np.ndarray, threshold: float = 0.02, min_diff: int = 15
+) -> bool:
+    """判断两帧是否发生显著变化。
+
+    Args:
+        a, b: BGR 图像数组，形状需一致。
+        threshold: 变化像素占比超过该阈值视为有变化。
+        min_diff: 单像素灰度差超过该值才计入变化。
+
+    Returns:
+        True 表示两帧差异显著。
+    """
+    if a is None or b is None or a.shape != b.shape:
+        return True
+    gray_a = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)
+    gray_b = cv2.cvtColor(b, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(gray_a, gray_b)
+    _, diff_bin = cv2.threshold(diff, min_diff, 255, cv2.THRESH_BINARY)
+    changed_ratio = float(np.count_nonzero(diff_bin)) / diff_bin.size
+    return changed_ratio > threshold
+
+
+def wait_for_stable(
+    capture_func: Callable[[], np.ndarray],
+    timeout: float = 2.0,
+    poll_interval: float = 0.05,
+    stable_frames: int = 2,
+    threshold: float = 0.02,
+) -> bool:
+    """轮询截图，等待画面稳定（连续 stable_frames 帧变化小于阈值）。
+
+    Args:
+        capture_func: 无参函数，返回 BGR 图像数组。
+        timeout: 最长等待时间（秒）。
+        poll_interval: 每次截图间隔（秒）。
+        stable_frames: 连续多少帧差异小于阈值才认为稳定。
+        threshold: 变化像素占比阈值。
+
+    Returns:
+        True 表示在超时前已稳定，False 表示超时。
+    """
+    import time
+
+    start = time.monotonic()
+    prev = capture_func()
+    stable = 0
+    while time.monotonic() - start < timeout:
+        time.sleep(poll_interval)
+        current = capture_func()
+        if frames_changed(prev, current, threshold=threshold):
+            stable = 0
+        else:
+            stable += 1
+            if stable >= stable_frames:
+                return True
+        prev = current
+    return False

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -31,14 +32,22 @@ class WukuReader:
         parse_workers: int = 4,
         reconcile_threshold: float = 0.55,
         progress_callback: ProgressCallback = None,
+        auto_resize: bool = True,
+        stop_event: Optional[threading.Event] = None,
     ):
         self.backend = ocr_backend or RapidOCRBackend()
-        self.navigator = WukuNavigator(ocr_backend=self.backend)
+        self.navigator = WukuNavigator(
+            ocr_backend=self.backend,
+            auto_resize=auto_resize,
+            stop_event=stop_event,
+        )
         self.scanner = WukuScanner(
             ocr_backend=self.backend,
             confidence_threshold=confidence_threshold,
             output_dir=output_dir,
             parse_workers=parse_workers,
+            auto_resize=auto_resize,
+            stop_event=stop_event,
         )
         self.reconcile_threshold = reconcile_threshold
         self.progress_callback = progress_callback

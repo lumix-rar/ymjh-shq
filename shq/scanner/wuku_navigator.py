@@ -9,18 +9,21 @@
 from __future__ import annotations
 
 import ctypes
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
+from shq.scanner.exceptions import ScanInterruptedError
 from shq.scanner.input_simulator import InputSimulator
 from shq.scanner.ocr_scanner import OCRBackend, PlaceholderOCRBackend
 from shq.scanner.window_capture import (
     DEFAULT_CLIENT_HEIGHT,
     DEFAULT_CLIENT_WIDTH,
     WindowCapture,
+    wait_for_stable,
 )
 
 
@@ -34,15 +37,25 @@ class WukuNavigator:
         self,
         ocr_backend: Optional[OCRBackend] = None,
         attach_thread: bool = True,
+        auto_resize: bool = True,
+        stop_event: Optional[threading.Event] = None,
     ):
         self.backend = ocr_backend or PlaceholderOCRBackend()
         self._sim = InputSimulator(default_delay=0.5)
         self._attach_thread = attach_thread
         self._cap: Optional[WindowCapture] = None
+        self._window_prepared = False
+        self.auto_resize = auto_resize
+        self.stop_event = stop_event
 
     # ------------------------------------------------------------------
     # 窗口 / 截图 / 点击
     # ------------------------------------------------------------------
+    def _check_stopped(self) -> None:
+        """若用户请求停止，则抛出 ScanInterruptedError。"""
+        if self.stop_event is not None and self.stop_event.is_set():
+            raise ScanInterruptedError()
+
     def _get_cap(self) -> WindowCapture:
         if self._cap is not None:
             return self._cap
@@ -79,11 +92,23 @@ class WukuNavigator:
         """确保窗口客户区为基准分辨率，避免缩放后 OCR/坐标失效。"""
         try:
             cap = self._get_cap()
-            cap.ensure_client_size(DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT)
+            size = cap.get_client_size()
+            if size == (DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT):
+                return
+            if not self.auto_resize:
+                print(
+                    f"[警告] 游戏窗口客户区为 {size}，不是基准分辨率 "
+                    f"{DEFAULT_CLIENT_WIDTH}x{DEFAULT_CLIENT_HEIGHT}，"
+                    f"但已禁用自动调整，继续扫描可能导致坐标/OCR 偏差"
+                )
+                return
+            ok = cap.resize_client(DEFAULT_CLIENT_WIDTH, DEFAULT_CLIENT_HEIGHT)
+            if not ok:
+                print(f"[警告] 无法固定窗口大小：resize_client 失败")
         except Exception as exc:
             print(f"[警告] 无法固定窗口大小：{exc}")
 
-    def _bring_to_front(self) -> None:
+    def _bring_to_front(self, wait: float = 0.5) -> None:
         cap = self._get_cap()
         hwnd = cap.hwnd
         if hwnd is None:
@@ -91,6 +116,10 @@ class WukuNavigator:
 
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
+
+        # 已经是前台窗口时避免焦点切换和等待
+        if hwnd == user32.GetForegroundWindow() and not user32.IsIconic(hwnd):
+            return
 
         if user32.IsIconic(hwnd):
             user32.ShowWindow(hwnd, 9)
@@ -112,10 +141,19 @@ class WukuNavigator:
             if attached:
                 user32.AttachThreadInput(fg_tid, target_tid, False)
 
-        time.sleep(0.5)
+        time.sleep(wait)
+
+    def prepare(self) -> None:
+        """扫描/导航前一次性准备：找窗口、调尺寸、置顶。"""
+        self._get_cap()
+        if not self._window_prepared:
+            self._ensure_fixed_size()
+            self._bring_to_front()
+            self._window_prepared = True
 
     def _capture(self) -> np.ndarray:
-        self._bring_to_front()
+        if not self._window_prepared:
+            self._bring_to_front()
         cap = self._get_cap()
         img = cap.capture(bring_to_front=False)
         if img is None:
@@ -123,12 +161,46 @@ class WukuNavigator:
         return img
 
     def _click_client(self, cx: int, cy: int, delay: float = 1.0) -> None:
-        self._bring_to_front()
+        if not self._window_prepared:
+            self._bring_to_front()
         cap = self._get_cap()
         if cap.hwnd is None:
             raise RuntimeError("窗口句柄为空")
         self._sim.click_on_window(cap.hwnd, cx, cy, attach_thread=self._attach_thread)
         time.sleep(delay)
+
+    def _wait_for_stable(
+        self, timeout: float = 2.0, stable_frames: int = 2, threshold: float = 0.02
+    ) -> bool:
+        """等待游戏画面稳定，替代固定 time.sleep。等待期间也会检查是否停止。"""
+        def _capture_and_check():
+            self._check_stopped()
+            return self._capture()
+
+        return wait_for_stable(
+            _capture_and_check,
+            timeout=timeout,
+            stable_frames=stable_frames,
+            threshold=threshold,
+        )
+
+    def _click_and_wait_for_stable(
+        self,
+        cx: int,
+        cy: int,
+        max_wait: float = 1.2,
+        stable_frames: int = 2,
+    ) -> None:
+        """点击后等待画面稳定，最大等待 max_wait 秒。"""
+        if not self._window_prepared:
+            self._bring_to_front()
+        cap = self._get_cap()
+        if cap.hwnd is None:
+            raise RuntimeError("窗口句柄为空")
+        self._sim.click_on_window(
+            cap.hwnd, cx, cy, attach_thread=self._attach_thread, delay=0.05
+        )
+        self._wait_for_stable(timeout=max_wait, stable_frames=stable_frames)
 
     # ------------------------------------------------------------------
     # 导航核心
@@ -146,10 +218,11 @@ class WukuNavigator:
         if target not in NAV_TARGETS:
             raise ValueError(f"未知导航目标：{target}，可选：{sorted(NAV_TARGETS)}")
 
-        # 导航前先固定窗口大小，避免用户手动缩放后 ROI/OCR 失效
-        self._ensure_fixed_size()
+        # 导航前一次性准备窗口，避免扫描过程中反复置顶
+        self.prepare()
 
         for attempt in range(max_retries):
+            self._check_stopped()
             img = self._capture()
             if self._is_at(target, img):
                 print(f"[导航] 已在 {target} 界面")
@@ -163,7 +236,7 @@ class WukuNavigator:
 
             cx, cy = buttons[target]
             print(f"[导航] 点击 {target}：({cx}, {cy})")
-            self._click_client(cx, cy, delay=1.2)
+            self._click_and_wait_for_stable(cx, cy, max_wait=1.2)
 
             img = self._capture()
             if self._is_at(target, img):
